@@ -2,7 +2,7 @@
 Test smolyak.misc.r_function
 '''
 import unittest
-from smolyak.misc.r_function import RFunction
+from smolyak.misc.collections import RFunction
 
 class TestRFunction(unittest.TestCase):
 
@@ -26,5 +26,4 @@ class TestRFunction(unittest.TestCase):
         self.assertEqual(G[(1, 2)], -3)
 
 if __name__ == "__main__":
-    # import sys;sys.argv = ['', 'Test.test1']
     unittest.main()

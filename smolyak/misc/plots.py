@@ -9,7 +9,7 @@ from matplotlib.colors import LightSource
 import matplotlib
 import warnings
 from numpy import inf
-def plot_mis(mis, dims, weight_dict=None, N_q=1):
+def plot_indices(mis, dims, weight_dict=None, N_q=1):
     '''
     Plot multi-index set
     
@@ -18,9 +18,9 @@ def plot_mis(mis, dims, weight_dict=None, N_q=1):
     :param dims: Which dimensions to use for plotting
     :type dims: List of integers.
     :param weight_dict: Weights associated with each multi-index
-    :type weight_dict: Optional. Dictionary
+    :type weight_dict: Dictionary
     :param N_q: Number of percentile-groups plotted in different colors
-    :type N_q: Optional. Integer>=1
+    :type N_q: Integer>=1
     '''
     if len(dims) > 3:
         raise ValueError('Cannot plot more than three dimensions.')
@@ -45,20 +45,20 @@ def plot_mis(mis, dims, weight_dict=None, N_q=1):
     sizes = {mi: np.power(size_function(mi), 0.1) for mi in mis}
     for q in range(N_q):
         if N_q > 1:
-            plot_mis = [mi for mi in mis if weight_function(mi) >= np.percentile(values, 100 / N_q * q) and weight_function(mi) <= np.percentile(values, 100 / N_q * (q + 1))]
+            plot_indices = [mi for mi in mis if weight_function(mi) >= np.percentile(values, 100 / N_q * q) and weight_function(mi) <= np.percentile(values, 100 / N_q * (q + 1))]
         else:
-            plot_mis = mis
-        X = np.array([mi[dims[0]] for mi in plot_mis])
+            plot_indices = mis
+        X = np.array([mi[dims[0]] for mi in plot_indices])
         if len(dims) > 1:
-            Y = np.array([mi[dims[1]] for mi in plot_mis])
+            Y = np.array([mi[dims[1]] for mi in plot_indices])
         else:
-            Y = np.array([0 for mi in plot_mis])
+            Y = np.array([0 for mi in plot_indices])
         if len(dims) > 2:
-            from mpl_toolkits.mplot3d import Axes3D  # @UnusedImport
-            Z = np.array([mi[dims[2]] for mi in plot_mis])
+            from mpl_toolkits.mplot3d import Axes3D  # @UnusedImport, @UnresolvedImport
+            Z = np.array([mi[dims[2]] for mi in plot_indices])
         else:
-            Z = np.array([0 for mi in plot_mis])   
-        sizes_plot = np.array([sizes[mi] for mi in plot_mis])
+            Z = np.array([0 for mi in plot_indices])   
+        sizes_plot = np.array([sizes[mi] for mi in plot_indices])
         if weight_dict:
             if len(dims) == 3:
                 ax.scatter(X, Y, Z, s=100 * sizes_plot / max(sizes.values()), color=colors[q], alpha=1)
@@ -132,25 +132,24 @@ def plot_convergence(times, values, expect_limit=None, expect_residuals=None,
     :param values: Outputs
     :type values: List of arrays
     :param expect_limit: Exact solution
-    :type expect_limit: Optional. Array
+    :type expect_limit: Array
     :param expect_residuals: Expected residuals
-    :type expect_residuals: Optional. List of positive numbers
+    :type expect_residuals: List of positive numbers
     :param expect_times: Expected runtimes
-    :type expect_times: Optional. List of positive numbers
+    :type expect_times: List of positive numbers
     :param expect_order: Expected convergence order
-    :type expect_order: Optional. Real or 'fit'
+    :type expect_order: Real or 'fit'
     :param ignore: If expect_limit is not provided, how many entries (counting
        from the end) should be ignored for the computation of residuals. 
-    :type ignore: Optional. Integer.
+    :type ignore: Integer.
     :param ignore_start: How many entries counting from start should be ignored.
-    :type ignore_start: Optional. Integer.
+    :type ignore_start: Integer.
     :return: fitted convergence order
     '''
     c_ticks = 30;
     for value in values:
         if hasattr(value, 'shape') and len(value.shape) == 1:
-            value = value.reshape(1, -1)
-        
+            value = value.reshape(1, -1)  
     assert(len(times) == len(values))
     sorting = np.argsort(times)
     times = [times[i] for i in sorting]

@@ -15,5 +15,4 @@ class TestVFunction(unittest.TestCase):
         self.assertEqual(H(5.), 1.)
 
 if __name__ == "__main__":
-    # import sys;sys.argv = ['', 'Test.test1']
     unittest.main()

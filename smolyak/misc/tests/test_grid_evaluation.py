@@ -3,7 +3,7 @@ Test smolyak.misc.grid_evaluation
 '''
 import unittest
 import numpy as np
-from smolyak.misc.grid_evaluation import grid_evaluation
+from smolyak.misc.np_tools import grid_evaluation
 
 class TestGridEvaluation(unittest.TestCase):
 

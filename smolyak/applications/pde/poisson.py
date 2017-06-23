@@ -64,10 +64,15 @@ def poisson_kink(y, N, order=1):
     v = TestFunction(V)
     f = Constant(1.0)
     L = f * v * dx
+    class kink_coefficients(Expression):
+        def eval(self, value, x):
+            value[0]=1+np.power(np.linalg.norm(self.y),3)+np.linalg.norm(x)
+    D=kink_coefficients(degree=2*deg)    
     for i in range(y.shape[0]):
         # Compute solution
-        D = Expression('y+pow(4*(x[0]-0.5)*(x[0]-0.5)+4*(x[1]-0.5)*(x[1]-0.5),0.5)', y=1 + np.sqrt(np.sum(np.abs(y[i, :]) ** 2)), degree=2)
-        # D = Constant(1 + np.sqrt(np.sum(np.abs(y[i, :]) ** 2)))
+        #D = Expression(expression_string, y=np.power(np.sum(np.abs(y[i, :]) ** 2),3./2.), degree=2*deg)
+        # D = Constant(1 + np.sqrt(np.sum(np.abs(y[i, :]) ** 2))) 
+        D.y=y[i,:]
         a = dot(D * grad(ut), grad(v)) * dx
         u = Function(V)
         problem = LinearVariationalProblem(a, L, u, bc)

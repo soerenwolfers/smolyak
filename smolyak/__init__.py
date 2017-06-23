@@ -7,7 +7,6 @@ smolyak includes the following packages:
     * Solution of partial differential equations
     * Polynomial approximation
 * misc: Miscellaneous tools
-* demonstration: Tools for convergence analysis and visualization
 * sparse: The core of the toolbox, including:
     * General, adaptive and non-adaptive, implementations of Smolyak's algorithm
         in class sparse_approximator.SparseApproximator
@@ -16,3 +15,5 @@ smolyak includes the following packages:
     * Problem abstraction module to be used with SparseApproximator 
         in class approximation_problem.ApproximationProblem
 '''
+from .approximator import Approximator
+from .decomposition import Decomposition

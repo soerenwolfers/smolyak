@@ -7,13 +7,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 import timeit
 from smolyak.misc import plots
-from smolyak.applications.polreg.mi_weighted_polynomial_approximator import MIWeightedPolynomialApproximator
-from smolyak.sparse.sparse_approximator import SparseApproximator
+from smolyak.applications.polynomials.mi_weighted_polynomial_approximator import MIWeightedPolynomialApproximator
+from smolyak.approximator import Approximator
 from smolyak.applications.pde.kl1D import kl1D
 from matplotlib2tikz import save as tikz_save
-from smolyak.applications.polreg.polynomial_subspace import MultivariatePolynomialSubspace,\
+from smolyak.applications.polynomials.polynomial_subspace import MultivariatePolynomialSubspace,\
     UnivariatePolynomialSubspace
-from smolyak.sparse.approximation_problem import ApproximationProblem
+from smolyak.decomposition import Decomposition
     
 def kl_nonadaptive():
     xi=2.
@@ -34,7 +34,7 @@ def kl_nonadaptive():
             return 2.**mi[0]*np.prod([2.**v for __,v in mi.leftshift()])
         def contribution(mi):
             return 4.**(-mi[0])*np.prod([np.exp(-np.log(xi*(dim+1)**exponent)*(2.**(v-1))) for dim,v in mi.leftshift()])
-        SA = SparseApproximator(decomposition=mipa.expand,
+        SA = Approximator(decomposition=mipa.expand,
                             is_bundled=lambda dim: dim>=1, 
                             work_factor=work,
                             contribution_factor=contribution,
@@ -65,12 +65,12 @@ def kl_adaptive():
     for step in range(CSTEPS):
         ps=MultivariatePolynomialSubspace(ups=UnivariatePolynomialSubspace(),c_var=55,sampler='optimal')
         mipa = MIWeightedPolynomialApproximator(PDE, c_dim_acc=1,ps=ps)
-        problem = ApproximationProblem(decomposition=mipa.expand, n='inf', 
+        problem = Decomposition(decomposition=mipa.expand, n='inf', 
                                        init_dims=1, is_bundled=lambda dim: dim>=1, 
                                        is_external=True,
-                                       work_factor=lambda mis: mipa.required_samples(mis)*2**mis[0][0],
+                                       work_factor=lambda mis: mipa.estimated_work(mis)*2**mis[0][0],
                                        has_work_model=True)
-        SA = SparseApproximator(problem=problem,work_type='work_model')
+        SA = Approximator(problem=problem,work_type='work_model')
         tic = timeit.default_timer()
         work=SA.expand_adaptive(T_max=2.**step,
                                 contribution_exponents=lambda dim: -np.log(xi*(dim+1)**exponent),

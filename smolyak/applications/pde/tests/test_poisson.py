@@ -42,7 +42,7 @@ class TestPoisson(unittest.TestCase):
         
     def test_timing(self):
         import cProfile
-        cProfile.run('from smolyak.pde.poisson import poisson_kink;import numpy as np;'
+        cProfile.run('from smolyak.applications.pde.poisson import poisson_kink;import numpy as np;'
          'poisson_kink(np.array([[1,2],[2,3],[4,3],[3,2],[3,2],[3,2]]).reshape(-1,2), 64)', 'restats')
         import pstats
         p = pstats.Stats('restats') 
