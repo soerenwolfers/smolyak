@@ -4,35 +4,39 @@ Sparse approximation using Smolyak's algorithm
 from __future__ import division
 import numpy as np
 import timeit
-from smolyak.indices import  MultiIndexDict, get_admissible_indices, DCSet
+from smolyak.indices import  MultiIndexDict, get_admissible_indices, DCSet,\
+    kronecker
 import copy
 import warnings
 import math
-from smolyak.misc.plots import plot_indices
+from smolyak.aux.plots import plot_indices
 from smolyak import indices
-from smolyak.misc.logs import Log
-from smolyak.misc.decorators import log_instance_method
-from smolyak.misc.collections import DefaultDict
-from smolyak.misc.np_tools import weighted_median
+from smolyak.aux.logs import Log
+from smolyak.aux.decorators import log_calls
+from smolyak.aux.more_collections import DefaultDict
+from smolyak.aux.np_tools import weighted_median
+from operator import mul
+import functools
+from numpy import Inf
+
 
 class Approximator(object):
     r'''
     Computes sparse approximation based on multi-index decomposition.
     
-    Given a decomposition
+    Given a decomposition,
     
     .. math::
     
         f_{\infty}=\sum_{\mathbf{k}\in\mathbb{N}^{n}} (\Delta f)(\mathbf{k}),
     
-    approximations of the form
+    this class computes approximations of the form
     
     .. math:: 
     
-       \mathcal{S}_{\mathcal{I}}f:=\sum_{\mathbf{k}\in\mathcal{I}} (\Delta f)(\mathbf{k})
+       \mathcal{S}_{\mathcal{I}}f:=\sum_{\mathbf{k}\in\mathcal{I}} (\Delta f)(\mathbf{k}),
     
-    are computed, where :math:`\mathcal{I}` is an efficiently chosen finite 
-    multi-index set. 
+    where :math:`\mathcal{I}` is an efficiently chosen finite multi-index set. 
 
     Currently supported choices for the construction of :math:`\mathcal{I}` are 
      :code:`expand_adaptive`, :code:`expand_nonadaptive` and :code:`continuation`
@@ -41,9 +45,9 @@ class Approximator(object):
         r'''        
         :param decomposition: Decomposition of an approximation problem
         :type decomposition: Decomposition
-        :param work_type: Optimize work model associated with decomposition or runtime
+        :param work_type: Optimize [work model associated with decomposition] or runtime
         :type work_type: String. 'work_model' or 'runtime' 
-        :param log: Log
+        :param log: Log object used for logging
         '''
         self.decomposition = decomposition
         self.md = _MetaData(self.decomposition)
@@ -51,13 +55,13 @@ class Approximator(object):
         self.app = _Approximation(self.decomposition)
         self.work_type = work_type  # MOVE INTO ALGORITHMS?
         self.dry_run = not self.decomposition.is_external and not self.decomposition.func
-        if self.work_type == 'runtime' and self.dry_run:
-            raise ValueError('Cannot compute runtime without doing computations.')
+        #if self.work_type == 'runtime' and self.dry_run:
+        #    raise ValueError('Cannot compute runtime without doing computations.')
         if self.work_type == 'work_model':
             assert(self.decomposition.has_work_model) 
         self.log = log or Log()   
             
-    @log_instance_method   
+    @log_calls   
     def continuation(self , L_max=None, T_max=None, L_min=2, work_exponents=None, contribution_exponents=None, find_work_exponents=False):
         '''
         Compute sparse approximation adaptively by using increasing multi-index 
@@ -126,7 +130,7 @@ class Approximator(object):
             l += 1
         return work_exponents, contribution_exponents, mis
     
-    @log_instance_method    
+    @log_calls    
     def expand_nonadaptive(self, L, c_dim=-1, scale=1):
         '''
         Compute sparse approximation non-adaptively.
@@ -155,7 +159,7 @@ class Approximator(object):
             raise KeyError('Did you specify the work for all dimensions?')
         self.update_approximation(mis)
         
-    @log_instance_method
+    @log_calls
     def expand_adaptive(self, c_steps=np.Inf, reset=False, T_max=np.Inf):
         '''
         Compute sparse approximation adaptively.
@@ -208,7 +212,7 @@ class Approximator(object):
             self.ad = ad_final
         return timeit.default_timer() - tic_init
     
-    @log_instance_method    
+    @log_calls    
     def update_approximation(self, mis):
         '''
         Compute approximation based on multi-indices in mis.
@@ -239,10 +243,10 @@ class Approximator(object):
             raise KeyError('No contribution fit for this dimension') 
         
     def get_total_work_model(self):
-        return sum(self.md.work_models.dict.values())
+        return sum(self.md.work_models._dict.values())
     
     def get_total_runtime(self):
-        return sum(self.md.runtimes.dict.values())
+        return sum(self.md.runtimes._dict.values())
     
     def get_indices(self):
         return copy.deepcopy(self.app.mis.mis)
@@ -252,7 +256,7 @@ class Approximator(object):
         :param dims: Dimensions that should be used for plotting
         :type dims: List of integers, length at most 3
         :param weighted: Determines size of points
-        :type weighted: 'contribution' or 'work_model' or 'runtime'
+        :type weighted: 'contribution' or 'work_model' or 'runtime' or 'contribution/work_model' or 'contribution/runtime'
         :param percentiles: Plot given number of weight-percentile groups in different colors
         :type perentiles: Integer
         '''
@@ -261,20 +265,22 @@ class Approximator(object):
         if not weighted:
             weight_dict = None
         elif weighted == 'contribution':
-            weight_dict = self.md.contributions
+            weight_dict = {mi: self.md.contributions[mi] for mi in self.get_indices()}
         elif weighted == 'work_model':
             assert(self.decomposition.has_work_model)
-            weight_dict = self.md.work_models
+            weight_dict = {mi: self.md.work_models[mi] for mi in self.get_indices()}
         elif weighted == 'runtime':
-            weight_dict = self.md.runtimes
+            weight_dict = {mi: self.md.runtimes[mi] for mi in self.get_indices()}
         elif weighted == 'contribution/work_model':
             assert(self.decomposition.has_work_model)
-            weight_dict = {mi:self.md.contributions[mi] / self.md.work_models[mi] for mi in self.md.contributions}
+            weight_dict = {mi:self.md.contributions[mi] / self.md.work_models[mi] for mi in self.get_indices()}
         elif weighted == 'contribution/runtime':
-            weight_dict = {mi: self.md.contributions[mi] / self.md.runtimes[mi] for mi in self.md.contributions}
+            weight_dict = {mi: self.md.contributions[mi] / self.md.runtimes[mi] for mi in self.get_indices()}
+        else: 
+            raise ValueError('Cannot use weights {}'.format(weighted))
         plot_indices(mis=self.get_indices(), dims=dims, weight_dict=weight_dict, N_q=percentiles) 
           
-    @log_instance_method
+    @log_calls
     def _expand_by_mi_or_bundle(self, mi_or_bundle):
         '''
         Expands approximatoin by given multi-index or multi-index-bundle.
@@ -340,15 +346,204 @@ class Approximator(object):
             for mi in mis_update:
                 self.ad.contribution_estimator[mi] = contribution[mi] / self.decomposition.contribution_factor(mi)
                 self.md.contributions[mi] = contribution[mi]
-        except NameError: 
+        except (KeyError,NameError): 
             pass  # Contribution could not be determined, contribution was never created
         if math.isinf(self.decomposition.n):
             self.ad.find_new_dims(mis_update, self.app.mis)
         return runtime
 
+class Decomposition():
+    def __init__(self, func=None, n=None, init_dims=None, next_dims=None, is_bundled=None,
+                 is_external=False, is_md=None, have_work_factor=None,
+                 have_contribution_factor=None, work_factor=None, contribution_factor=None,
+                 has_work_model=False, has_contribution_model=False, kronecker_exponents=None,reset=None):
+        r'''        
+        :param func: Computes decomposition terms.
+            In the most basic form, a single multi-index is passed to 
+            :code:`func` and a single value, which represents the corresponding 
+            decomposition term and supports vector space operations, is expected. 
+            
+            If is_bundled, then :code:`func` is passed an iterable of multi-indices
+            (which agree in the dimensions that are not bundled, see below) must return 
+            the sum of the corresponding decomposition elements.
+            This may be useful for parallelization, or for problems where joint
+            computation of decomposition elements is analytically more efficient.
+            
+            If :code:`is_external`, no output is required and decomposition terms
+            are expected to be stored by :code:`func` itself. Each call 
+            will contain the full multi-index set representing the current approximation.
+            
+            If :code:`has_work_model`, return (value,work) (or only work if is_external),
+            where work is a single float representing the work that was required for the 
+            computation of value.
+            
+            If :code:`has_contribution_model`, return (value,contribution) (or only 
+            contribution if is_external), where contribution is:
+                *a single float if not is_external and not is_bundled or else
+                *a dictionary  {(mi,contribution(float) for mi in bundle}
+                    where bundle is the multi-index set that has been passed
+            
+            If both, return (value,work,contribution) (or only (work,contribution))
+            if is_external 
+        :type func:  Function.
+        :param n: Number of discretization parameters
+        :type n: Integers including numpy.Inf (or 'inf') 
+        :param init_dims: In most cases this should be :math:`n`. However, for large or infinite :math:`n`, instead provide list of 
+           dimensions that are explored initially. Each time a multi-index with non-zero group in one of these initial dimensions is selected, 
+           new dimensions are added, according to  nextDims
+        :type init_dims: Integer or list of integers
+        :param next_dims: Assigns to each dimension a list of child dimensions (see above)
+        :type next_dims: :math:`\mathbb{N}\to 2^{\mathbb{N}}`
+        :param is_bundled: In some problems, the decomposition terms cannot be computed independent of 
+           each other. In this case, :code:`func` is called with subsets of :math:`\mathcal{I}` whose entries agree
+           except for the dimensions specified in is_bundled
+        :type is_bundled: :math:`\mathbb{N}\to\{\text{True},\text{False}\}` or list of dimensions
+        :param have_work_factor: Dimensions for which work_factor is available
+        :type have_work_factor: Boolean or :math:`\mathbb{N}\to\{\text{True},\text{False}\}` or list of dimensions
+        :param have_contribution_factor: Dimensions for which contribution factor is available
+        :type have_contribution_factor: Boolean or :math:`\mathbb{N}\to\{\text{True},\text{False}\}` or list of dimensions
+        :param work_factor: If specified, then the work required for the computation of :math:`f(\mathbf{k})` is assumed to behave
+        like :math:`\verb|work_factor|(\mathbf{k})\times w(\tilde{\mathbf{k}})` where :math:`\tilde{\mathbf{k}}` contains the
+        entries of :math:`\mathbf{k}` that are not in :code:`have_work_factor`. 
+           If this is a list of real numbers, the work is assumed to grow exponentially in given parameters with exponents specified in list.
+        :type work_factor: :math:`\mathbb{N}^n\to(0,\infty)` or list of positive numbers
+        :param contribution_factor: If specified, then the contribution of :math:`f(\mathbf{k})` is assumed to behave
+        like :math:`\verb|work_factor|(\mathbf{k})\times e(\tilde{\mathbf{k}})` where :math:`\tilde{\mathbf{k}}` contains the
+        entries of :math:`\mathbf{k}` that are not in :code:`have_work_factor`. 
+           If this is a list of real numbers, the contribution is assumed to decay exponentially in given parameters with exponents specified in list.
+        :type contribution_factor: :math:`\mathbb{N}^n\to(0,\infty)` or list of positive numbers
+        :param is_md: Specifies whether decomposition is a multi-index decomposition. This information is used when fitting work parameters.
+        :type is_md: Boolean
+        :param is_external: Specifies whether approximation is computed externally. If True, :code:`func` is called multiple times 
+        with a SparseIndex as argument (or a list of SparseIndices if :code:`is_bundled` is True as well) and must collect the associated
+        decomposition terms itself. If False, :code:`func` is also called multiple times with a SparseIndex (or a list of SparseIndices)
+        and must return the associated decomposition terms, which are then stored within the SparseApproximator instance
+        :type is_external: Boolean
+        :param has_work_model: Does the decomposition come with its own cost specification?
+        :type has_work_model: Boolean
+        :param has_contribution_model: Does the decomposition come with its own contribution specification?
+        :param kronecker_exponents: For infinite dimensional problems, the 
+        contribution of Kronecker multi-index e_j is estimated as exp(contribution_exponent(j))
+        :type kronecker_exponents: Function from integers to negative reals
+        :param reset: If is_external, this function will reset the externally stored approximation
+        :type reset: Function
+        '''
+        self.func = func
+        self._set_n(n)
+        self.has_work_model = has_work_model
+        self.has_contribution_model = has_contribution_model
+        self.is_external = is_external
+        if math.isinf(self.n):
+            self._set_init_dims(init_dims)
+            self._set_next_dims(next_dims)  
+        elif init_dims or next_dims:
+            raise ValueError('Parameters init_dims and next_dims only valid for infinite-dimensional problems')
+        else:
+            self._set_init_dims(self.n)
+        self._set_is_bundled(is_bundled)
+        self._set_is_md(is_md)
+        self._process_work_factor(have_work_factor, work_factor, self.is_md)
+        self._process_contribution_factor(have_contribution_factor, contribution_factor, self.is_md)
+        self.kronecker_exponents = kronecker_exponents
+        self.reset=reset
+        
+    def _process_work_factor(self, have_work_factor, work_factor, is_md):
+        if have_work_factor is True or (have_work_factor is None and work_factor):
+            self.have_work_factor = lambda dim: True
+        elif hasattr(have_work_factor, '__contains__'):
+            self.have_work_factor = lambda dim: dim in have_work_factor
+        elif have_work_factor:
+            self.have_work_factor = have_work_factor
+        else:
+            self.have_work_factor = lambda dim: False
+        if work_factor:
+            if hasattr(work_factor, '__contains__'):
+                list_have = []
+                i = 0
+                dim = 0
+                while i < len(work_factor):
+                    if self.have_work_factor(dim):
+                        list_have.append(dim)
+                        i += 1
+                    dim += 1
+                if self.is_bundled:
+                    self.work_factor = lambda mi: functools.reduce(
+                            mul, [np.exp(work_factor[i] * mi[0][dim]) 
+                            for i, dim in enumerate(list_have)])
+                else:
+                    self.work_factor = lambda mi: functools.reduce(
+                            mul, [np.exp(work_factor[i] * mi[dim]) 
+                            for i, dim in enumerate(list_have)])
+            else:
+                self.work_factor = work_factor
+        else: 
+            self.work_factor = lambda mi: 1
+            
+    def _process_contribution_factor(self, have_contribution_factor, contribution_factor, is_md):
+        if have_contribution_factor is True or (have_contribution_factor is None and contribution_factor):
+            self.have_contribution_factor = lambda dim: True
+        elif hasattr(have_contribution_factor, '__contains__'):
+            self.have_contribution_factor = lambda dim: dim in have_contribution_factor
+        elif have_contribution_factor:
+            self.have_contribution_factor = have_contribution_factor
+        else:
+            self.have_contribution_factor = lambda dim: False
+        if contribution_factor:
+            if hasattr(contribution_factor, '__contains__'):
+                list_have = []
+                i = 0
+                dim = 0
+                while i < len(contribution_factor):
+                    if self.have_contribution_factor(dim):
+                        list_have.append(dim)
+                        i += 1
+                    dim += 1
+                self.contribution_factor = lambda mi: functools.reduce(
+                        mul, [np.exp(-contribution_factor[i] * mi[dim]) 
+                        for i, dim in enumerate(list_have)])
+            else:
+                self.contribution_factor = contribution_factor
+        else: 
+            self.contribution_factor = lambda mi: 1
+    
+    def _set_is_md(self, is_md):
+        if not is_md:
+            self.is_md = lambda dim: False
+        elif is_md is True:
+            self.is_md = lambda dim: True
+        else:
+            self.is_md = is_md
+            
+    def _set_is_bundled(self, bundled):
+        if hasattr(bundled, '__contains__'):
+            self.is_bundled = lambda dim: dim in bundled
+        else: 
+            self.is_bundled = bundled
+       
+    def _set_n(self, n):
+        if hasattr(n, 'upper') and n.upper() in ['INF', 'INFINITY', 'INFTY'] or n is None:
+            self.n = Inf   
+        else:
+            self.n = n
+         
+    def _set_next_dims(self, next_dims):
+        if (not next_dims) and self.n == Inf:
+            self.next_dims = lambda dim: [dim + 1] if dim + 1 not in self.init_dims else []
+        else:
+            self.next_dims = next_dims
+        
+    def _set_init_dims(self, init_dims):
+        if isinstance(init_dims, int):
+            self.init_dims = range(init_dims)
+        elif hasattr(init_dims, '__contains__'):
+            self.init_dims = init_dims
+        elif init_dims is None:
+            self.init_dims = [0]
+
+
 class _Estimator(object):
     
-    def __init__(self, dims_ignore, exponent_max, exponent_min, is_md, init_exponents=None):
+    def __init__(self, dims_ignore, exponent_max, exponent_min, md_correction=None, init_exponents=None):
         self.quantities = {}
         self.dims_ignore = dims_ignore
         self.ratios = DefaultDict(lambda dim: [])
@@ -356,10 +551,23 @@ class _Estimator(object):
         self.fallback_exponents = DefaultDict(init_exponents)  # USED AS PRIOR IN EXPONENT ESTIMATION AND AS INITIAL GUESS OF EXPONENT WHEN NO DATA AVAILABLE AT ALL
         self.exponents = DefaultDict(lambda dim: self.fallback_exponents[dim])
         self.reliability = DefaultDict(lambda dim: 1)
-        self.is_md = is_md
+        self.md_correction = md_correction or (lambda dim: False)
         self.exponent_max = exponent_max
         self.exponent_min = exponent_min
         self.FIT_WINDOW = np.Inf
+        self.active_dims=set()
+        
+    def _base_estimate(self,mi):
+        q_neighbors = []
+        q_neighbors.append(self.quantities[mi])
+        for dim in self.active_dims:
+            neighbor1=mi-kronecker(dim)
+            if neighbor1 in self.quantities:
+                q_neighbors.append(self.quantities[neighbor1]*np.exp(self.exponents[dim]))
+            neighbor2=mi+kronecker(dim)
+            if neighbor2 in self.quantities:
+                q_neighbors.append(self.quantities[neighbor2]*np.exp(-self.exponents[dim]))
+        return np.mean(q_neighbors)
         
     def set_fallback_exponent(self, dim, fallback_exponent):
         self.fallback_exponents[dim] = fallback_exponent
@@ -369,14 +577,14 @@ class _Estimator(object):
         return mi in self.quantities
     
     def __setitem__(self, mi, q):
+        self.active_dims.update(set(mi.active_dims()))
         mi = mi.mod(self.dims_ignore)
         self.quantities[mi] = q
         for dim in [dim for dim in mi.active_dims()]:
-            mi_compare = mi.copy()
-            mi_compare[dim] = mi_compare[dim] - 1
+            mi_compare = mi - kronecker(dim)
             if self.quantities[mi_compare] > 0:
                 ratio_new = q / self.quantities[mi_compare]
-                if self.is_md(dim) and mi_compare[dim] == 0:
+                if self.md_correction(dim) and mi_compare[dim] == 0:
                     ratio_new -= 1
                     if ratio_new < 0:
                         ratio_new = 0
@@ -394,7 +602,7 @@ class _Estimator(object):
             estimate = max(min(np.median(ratios), np.exp(self.exponent_max)), np.exp(self.exponent_min))
             c = len(ratios)
             self.exponents[dim] = (self.fallback_exponents[dim] + c * np.log(estimate)) / (c + 1.)
-            self.reliability[dim] = 1. / (1 + np.median([np.abs(ratio - estimate) for ratio in ratios]) / estimate)
+            self.reliability[dim] = 1. / (1 + 1/math.sqrt(c)+np.median([np.abs(ratio - estimate) for ratio in ratios]) / estimate)
             
     def __call__(self, mi):
         mi = mi.mod(self.dims_ignore)
@@ -405,31 +613,29 @@ class _Estimator(object):
                 q_neighbors = []
                 w_neighbors = []
                 for dim in mi.active_dims():
-                    neighbor = mi.copy()
-                    neighbor[dim] = neighbor[dim] - 1
-                    q_neighbor = self.quantities[neighbor] * np.exp(self.exponents[dim])
+                    neighbor = mi - kronecker(dim)
+                    q_neighbor = self._base_estimate(neighbor)*np.exp(self.exponents[dim])
                     q_neighbors.append(q_neighbor)
                     w_neighbors.append(self.reliability[dim])
-                return weighted_median(q_neighbors, w_neighbors)
+                return sum([q*w for (q,w) in zip(q_neighbors, w_neighbors)])/sum(w_neighbors)
             else:
                 return 1
 
 class _AdaptiveData(object):
     
     def __init__(self, decomposition):
-        self.WORK_EXPONENT_MAX = 100
+        self.WORK_EXPONENT_MAX = 10
         self.WORK_EXPONENT_MIN = 0
         self.CONTRIBUTION_EXPONENT_MAX = 0
-        self.CONTRIBUTION_EXPONENT_MIN = -100
+        self.CONTRIBUTION_EXPONENT_MIN = -10
         self.decomposition = decomposition
         self.work_estimator = _Estimator(self.decomposition.have_work_factor,
                                       exponent_max=self.WORK_EXPONENT_MAX,
                                       exponent_min=self.WORK_EXPONENT_MIN,
-                                      is_md=self.decomposition.is_md)
+                                      md_correction=self.decomposition.is_md)
         self.contribution_estimator = _Estimator(self.decomposition.have_contribution_factor,
                                               exponent_max=self.CONTRIBUTION_EXPONENT_MAX,
                                               exponent_min=self.CONTRIBUTION_EXPONENT_MIN,
-                                              is_md=self.decomposition.is_md,
                                               init_exponents=self.decomposition.kronecker_exponents)
               
     def evaluator(self, mi):
@@ -445,22 +651,20 @@ class _AdaptiveData(object):
             if mi.is_kronecker() and not mi in dc_set:
                 dim_trigger = mi.active_dims()[0]
                 dims_new = self.decomposition.next_dims(dim_trigger)
-                if not hasattr(dims_new, '__contains__'):
-                    dims_new = [dims_new]
                 for dim in dims_new:
-                    dc_set.candidates |= {indices.kronecker(dim)}
+                    dc_set.add_dimensions([dim])
                     self.work_estimator.set_fallback_exponent(dim, self.work_estimator.exponents[dim_trigger])
                     if not self.decomposition.kronecker_exponents:
                         self.contribution_estimator.set_fallback_exponent(dim, self.contribution_estimator.exponents[dim_trigger])
     
 class _Approximation(object):
-    def __init__(self, problem):
-        self.mis = DCSet()
-        self.object_slices = MultiIndexDict(problem.is_bundled)
+    def __init__(self, decomposition):
+        self.mis = DCSet(dims=decomposition.init_dims)
+        self.object_slices = MultiIndexDict(decomposition.is_bundled)
         
 class _MetaData(object):
-    def __init__(self, problem):
+    def __init__(self, decomposition):
         self.contributions = dict()
-        self.work_models = MultiIndexDict(problem.is_bundled)
-        self.runtimes = MultiIndexDict(problem.is_bundled)
+        self.work_models = MultiIndexDict(decomposition.is_bundled)
+        self.runtimes = MultiIndexDict(decomposition.is_bundled)
         

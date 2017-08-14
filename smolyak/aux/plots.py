@@ -9,6 +9,13 @@ from matplotlib.colors import LightSource
 import matplotlib
 import warnings
 from numpy import inf
+import matplotlib2tikz
+from matplotlib.pyplot import savefig
+
+def save(name):
+    matplotlib2tikz.save(name+'.tex')
+    savefig(name+'.pdf', bbox_inches='tight')
+
 def plot_indices(mis, dims, weight_dict=None, N_q=1):
     '''
     Plot multi-index set
@@ -90,14 +97,18 @@ def plot3D(X, Y, Z):
     '''
     Surface plot.
     
-    Generate X and Y using X,Y = np.mgrid[0:1:50j, 0:1:50j] for example.
+    Generate X and Y using, for example
+          X,Y = np.mgrid[0:1:50j, 0:1:50j]
+        or
+          X,Y= np.meshgrid([0,1,2],[1,2,3]).
     
     :param X: 2D-Array of x-coordinates
     :param Y: 2D-Array of y-coordinates
     :param Z: 2D-Array of z-coordinates
     '''
+    from mpl_toolkits.mplot3d import axes3d, Axes3D
     fig = plt.figure()
-    ax = fig.gca(projection='3d')
+    ax = Axes3D(fig)
     light = LightSource(90, 90)
     illuminated_surface = light.shade(Z, cmap=cm.coolwarm)
     Xmin = np.amin(X)
@@ -112,11 +123,11 @@ def plot3D(X, Y, Z):
     ax.plot_surface(X, Y, Z, cstride=5, rstride=5, facecolors=illuminated_surface, alpha=0.5)
     plt.show()
     
-def plot_convergence(times, values, expect_limit=None, expect_residuals=None,
+def plot_convergence(times, values, expect_limit=None, convergence_type='algebraic',expect_residuals=None,
                      expect_times=None, expect_order=None, ignore=1, p=2,
                      ignore_start=0):
     '''
-    Show loglog convergence plot.
+    Show loglog or semilogy convergence plot.
     
     Specify :code:`expect_limit` if exact limit is known. Otherwise limit is 
     taken to be last entry of :code:`values`.
@@ -133,6 +144,8 @@ def plot_convergence(times, values, expect_limit=None, expect_residuals=None,
     :type values: List of arrays
     :param expect_limit: Exact solution
     :type expect_limit: Array
+    :param convergence_type: Convergence type
+    :type convergence_type: 'algebraic' or 'exponential'
     :param expect_residuals: Expected residuals
     :type expect_residuals: List of positive numbers
     :param expect_times: Expected runtimes
@@ -175,18 +188,30 @@ def plot_convergence(times, values, expect_limit=None, expect_residuals=None,
             residuals[L] = np.power(np.sum(np.power(np.abs(values[L] - limit), p) / N), 1. / p)  #
         else:
             residuals[L] = np.amax(np.abs(values[L] - limit))
-    plt.loglog(times, residuals)
+    if convergence_type=='algebriaic':
+        plt.loglog(times, residuals)
+    else:
+        plt.semilogy(times,residuals)
     if expect_times is not None and expect_residuals is not None:
         plt.loglog(expect_times, expect_residuals) 
-    logx = np.log(times[ignore_start:]).reshape(-1)
-    logy = np.log(residuals[ignore_start:]).reshape(-1)
-    logy[logy == -inf] = -17
-    coeffs = np.polyfit(logx, logy, deg=1)
-    fitted_order = coeffs[0]
-    if expect_order is not None:
-        X = np.linspace(min(times), max(times), c_ticks)
+    if convergence_type == 'algebraic':
+        transformed_x = np.log(times[ignore_start:]).reshape(-1)
+    else:
+        transformed_x = np.array(times[ignore_start:]).reshape(-1)
+    transformed_y = np.log(residuals[ignore_start:]).reshape(-1)
+    transformed_y[transformed_y == -inf] = -17
+    if expect_order:
         if expect_order == 'fit':
-            plt.loglog(X, np.exp(coeffs[1]) * X ** (fitted_order))
+            coeffs = np.polyfit(transformed_x,transformed_y,deg=1)
         else:
-            plt.loglog(X, X ** (expect_order) / X[-1] ** (expect_order) * residuals[-1])
+            coeffs=np.zeros((2,))
+            coeffs[0]=expect_order
+            coeffs[1] = np.median(transformed_y-expect_order*transformed_x)
+        X = np.linspace(min(times), max(times), c_ticks)
+        if convergence_type=='algebraic':
+            plt.loglog(X, np.exp(coeffs[1]) * X ** (coeffs[0]))
+        else:
+            plt.semilogy(X,np.exp(coeffs[1]+coeffs[0]*X))
+    coeffs_return = np.polyfit(transformed_x, transformed_y, deg=1)
+    fitted_order = coeffs_return[0]     
     return fitted_order

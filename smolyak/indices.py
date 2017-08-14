@@ -3,8 +3,9 @@ Sparse multi-indices
 '''
 import itertools
 import numpy as np
-from smolyak.misc.collections import unique
-from smolyak.misc.collections import DefaultDict
+from smolyak.aux.more_collections import unique
+from smolyak.aux.more_collections import DefaultDict
+
 class DCSet(object):
     '''
     Stores downward closed sets of multi-indices and corresponding 
@@ -13,15 +14,12 @@ class DCSet(object):
     A multi-index is called admissible here if the set of multi-indices 
     remains downward closed after adding it
     '''
-    def __init__(self,mis=None):
+    def __init__(self,mis=(),dims = ()):
         self.mis = []
         self.active_dims = set()
         self.candidates = {MultiIndex()} 
-        if mis:
-            self.add_many(mis)
-            
-    def __contains__(self,mi):
-        return mi in self.mis
+        self.add_dimensions(dims)
+        self.add_many(mis)
     
     def add(self, mi):
         '''
@@ -34,21 +32,13 @@ class DCSet(object):
             self.mis.append(mi)
             if mi in self.candidates:
                 self.candidates -= {mi}
-            elif not mi.is_kronecker():
+            else:
                 raise ValueError('Multi-index is not admissible')
-            self.active_dims |= set(mi.active_dims())
             for dim in self.active_dims:
-                candidate = mi.copy()
-                candidate[dim] = candidate[dim] + 1
+                candidate = mi + kronecker(dim)
                 if self.is_admissible(candidate):
                     self.candidates.add(candidate)
-        
-    def __str__(self):
-        return list(self.mis).__str__()
-               
-    def __repr__(self):
-        return 'dc_set('+list(self.mis).__str__()+')'
-     
+    
     def add_many(self,mis):
         '''
         Add multiple new multi-indices.
@@ -58,21 +48,38 @@ class DCSet(object):
         '''
         mis=sorted(mis)
         for mi in mis:
-            self.add(mi)
+            self.add(mi)     
         
-    def __iter__(self):
-        return self.mis.__iter__()
-                
+    def add_dimensions(self,dims):
+        for dim in dims:
+            if dim in self.active_dims:
+                raise ValueError('{} was already an active dimension of downward closed set'.format(dim))
+            else:
+                self.active_dims.add(dim)
+                if MultiIndex() in self.mis:
+                    self.candidates.add(kronecker(dim))
+            
     def is_admissible(self, mi):
         '''
         Check if given multi-index is admissible.
         '''
         for dim in mi.active_dims():
-            test = mi.copy()
-            test[dim] -= 1
+            test = mi - kronecker(dim)
             if not test in self.mis:
                 return False
         return True
+        
+    def __iter__(self):
+        return self.mis.__iter__()
+       
+    def __str__(self):
+        return list(self.mis).__str__()
+               
+    def __repr__(self):
+        return 'dc_set('+list(self.mis).__str__()+')'
+                
+    def __contains__(self,mi):
+        return mi in self.mis
     
 def kronecker(dim):
     '''
@@ -100,19 +107,6 @@ class MultiIndex(object):
         if mi:
             for dim,v in mi if sparse else enumerate(mi):
                 self[dim]=v
-    
-    def __getitem__(self, dim):
-        if dim in self.multiindex.keys():
-            return self.multiindex[dim]
-        else:
-            return 0
-        
-    def __setitem__(self, dim, value):
-        if value > 0:
-            self.multiindex[dim] = value
-        else:
-            if dim in self.multiindex.keys():
-                self.multiindex.pop(dim)
                 
     def sparse_tuple(self):
         '''
@@ -121,7 +115,6 @@ class MultiIndex(object):
         
         :rtype: List of tuples
         '''
-        # SORTING IS IMPORTANT. DONT REPLACE BY SOMETHING FASTER
         return tuple(sorted(self.multiindex.items()))
     
     def copy(self):
@@ -132,21 +125,12 @@ class MultiIndex(object):
         A.multiindex = self.multiindex.copy()
         return A
     
-    def __hash__(self):
-        return self.sparse_tuple().__hash__()
-        
     def active_dims(self):
         '''
         Return dimensions with non-zero entries
         '''
-        return list(self.multiindex.keys())
-    
-    def __eq__(self, other):
-        return self.multiindex == other.multiindex
-    
-    def __ne__(self, other):
-        return not self.__eq__(other)
-    
+        return sorted(self.multiindex.keys())
+        
     def mod(self, mod):
         r'''
         Return copy with zeroes in dimensions specified by :code:`mod` (=modulo)
@@ -164,7 +148,7 @@ class MultiIndex(object):
         '''
         Return whether multi-index is unit vector, i.e. has exactly one non-zero entry, which is one.
         '''
-        return len(self.multiindex) == 1 and self.multiindex[list(self.multiindex.keys())[0]] == 1
+        return len(self.active_dims()) == 1 and self[self.active_dims()[0]] == 1
         
     def equal_mod(self, other, mod):
         '''
@@ -186,43 +170,22 @@ class MultiIndex(object):
         :type dimensions: boolean function
         '''
         new = self.copy()
-        for dim in list(new.multiindex.keys()):
+        for dim in new.active_dims():
             if not dimensions(dim):
                 new[dim] = 0
         return new
     
-    def __iter__(self):
-        return iter(self.sparse_tuple()) 
-    
-    def __sub__(self, other):
-        new = self.copy()
-        for dim in other.multiindex:  # list(other.multiindex.keys()):
-            new[dim] = new[dim] - other[dim]
-        return new
-    
-    def __add__(self, other):
-        new = self.copy()
-        for dim in other.multiindex:  # list(other.multiindex.keys()):
-            new[dim] = new[dim] + other[dim]
-        return new
-    
     def full_tuple(self, c_dim=None):
         '''
-        Returns full representation, including non-zero entries up to specified maximal dimension
+        Returns full representation
         
         :param c_dim: Number of dimensions to be included
         :rtype: tuple
         '''
         if c_dim is None:
-            c_dim = -1 if len(self.active_dims()) == 0 else max(self.active_dims())
-        return tuple((self[i] for i in range(c_dim+1)))
-    
-    def __str__(self):
-        return self.full_tuple().__str__()
-    
-    def __repr__(self):
-        return self.__str__()
-    
+            c_dim = max(self.active_dims() or [-1])+1
+        return tuple((self[i] for i in range(c_dim)))
+
     def retract(self, embed):
         '''
         Interpret entries in self as embedded entries of more compact multi-index and return the more compact multi-index.
@@ -253,18 +216,22 @@ class MultiIndex(object):
             dim += 1
         return minew    
     
-    def rightshift(self, n=1):
+    def shifted(self, n=1):
+        '''
+        Shift multi-index by n entries to the right
+        '''
         new = MultiIndex()
         for dim in self.multiindex:
-            new.multiindex[dim + n] = self.multiindex[dim]
+            if dim+n>=0:
+                new.multiindex[dim + n] = self.multiindex[dim]
         return new
     
-    def leftshift(self, n=1):
-        new = MultiIndex()
-        for dim in self.multiindex:
-            if dim >= n:
-                new.multiindex[dim - n] = self.multiindex[dim]
-        return new
+    #def leftshift(self, n=1):
+    #    new = MultiIndex()
+    #    for dim in self.multiindex:
+    #        if dim >= n:
+    #            new.multiindex[dim - n] = self.multiindex[dim]
+    #    return new
     
     def __lt__(self,other):
         dim_max=max(itertools.chain(self.active_dims(),other.active_dims()))
@@ -273,7 +240,49 @@ class MultiIndex(object):
     def __le__(self,other):
         dim_max=max(itertools.chain(self.active_dims(),other.active_dims()))
         return self.full_tuple(dim_max+1)<=other.full_tuple(dim_max+1)
-       
+            
+    def __eq__(self, other):
+        return self.multiindex == other.multiindex
+    
+    def __ne__(self, other):
+        return not self.__eq__(other)
+    
+    def __hash__(self):
+        return self.sparse_tuple().__hash__()
+    
+    def __iter__(self):
+        return iter(self.sparse_tuple()) 
+    
+    def __sub__(self, other):
+        new = self.copy()
+        for dim in other.multiindex:  # list(other.multiindex.keys()):
+            new[dim] = new[dim] - other[dim]
+        return new
+    
+    def __add__(self, other):
+        new = self.copy()
+        for dim in other.multiindex:
+            new[dim] = new[dim] + other[dim]
+        return new  
+        
+    def __str__(self):
+        return self.full_tuple().__str__()
+    
+    def __repr__(self):
+        return self.__str__()  
+        
+    def __getitem__(self, dim):
+        if dim in self.multiindex.keys():
+            return self.multiindex[dim]
+        else:
+            return 0
+        
+    def __setitem__(self, dim, value):
+        if value > 0:
+            self.multiindex[dim] = value
+        else:
+            if dim in self.multiindex.keys():
+                self.multiindex.pop(dim)
         
 class MultiIndexDict(object): 
     '''
@@ -283,41 +292,49 @@ class MultiIndexDict(object):
     
     :param mod: Dimensions that are ignored
     :type mod: :math:`\mathbb{N}\to\{\text{True},\text{False}\}`
+    :param initializer: Default values
+    :tzpe initializer: Function
     '''
     def __init__(self, mod=None, initializer=None):
-        self.dict = {}
+        self._dict = {}
         self.mod = mod
         self.initializer = initializer
-        
-    def __contains__(self, si):
-        if self.mod:
-            si = si.mod(self.mod)
-        return si in self.dict
-    
-    def __setitem__(self, si, value):
-        if self.mod:
-            si = si.mod(self.mod)
-        self.dict[si] = value
-
-    def __getitem__(self, si):
-        if self.mod:
-            si = si.mod(self.mod)
-        if si in self.dict:
-            return self.dict[si]
-        else:
-            if self.initializer:
-                self.dict[si] = self.initializer(si)
-                return self.dict[si]
-            else:
-                raise KeyError('Multi-index not contained in dictionary') 
-        
-    def __iter__(self):
-        return self.dict.__iter__()
     
     def pop(self, si):
         if self.mod:
             si = si.mod(self.mod)
-        self.dict.pop(si)
+        self._dict.pop(si)
+        
+    def __contains__(self, si):
+        if self.mod:
+            si = si.mod(self.mod)
+        return si in self._dict
+    
+    def __setitem__(self, si, value):
+        if self.mod:
+            si = si.mod(self.mod)
+        self._dict[si] = value
+
+    def __getitem__(self, si):
+        if self.mod:
+            si = si.mod(self.mod)
+        if si in self._dict:
+            return self._dict[si]
+        else:
+            if self.initializer:
+                self._dict[si] = self.initializer(si)
+                return self._dict[si]
+            else:
+                raise KeyError('Multi-index not contained in dictionary') 
+        
+    def __iter__(self):
+        return self._dict.__iter__()
+    
+    def __str__(self):
+        return self._dict.__str__()
+    
+    def __repr__(self):
+        return self.__str__()
  
 def get_bundles(sparse_indices,is_bundled):
     '''
@@ -347,24 +364,23 @@ def get_admissible_indices(admissible, dim=-1):
     :rtype: List
     '''
     mis = []
+    def next_admissible(admissible, mi, dim):
+        if admissible(mi + kronecker(0)):
+            return mi + kronecker(0)
+        else:
+            if dim == 1 or (dim < 1 and mi == MultiIndex()):
+                return False
+            else:
+                tail = next_admissible(lambda mi: admissible(mi.shifted()), mi.shifted(-1), dim - 1)
+                if tail:
+                    return tail.shifted();
+                else:
+                    return False
     if admissible(MultiIndex()):
         mis.append(MultiIndex())
-        while __next_admissible(admissible, mis[-1], dim):
-            mis.append(__next_admissible(admissible, mis[-1], dim))
+        while next_admissible(admissible, mis[-1], dim):
+            mis.append(next_admissible(admissible, mis[-1], dim))
     return mis
-
-def __next_admissible(admissible, mi, dim):
-    if admissible(mi + MultiIndex((1,))):
-        return mi + MultiIndex((1,))
-    else:
-        if dim == 1 or (dim < 1 and mi == MultiIndex()):
-            return False
-        else:
-            tail = __next_admissible(lambda mi: admissible(mi.rightshift()), mi.leftshift(), dim - 1)
-            if tail:
-                return tail.rightshift();
-            else:
-                return False
 
 def rectangle(L=None, c_dim=None):
     if not hasattr(L, '__contains__'):
@@ -439,12 +455,8 @@ def cartesian_product(entries, dims=None):
     :return: Cartesian product
     :rtype: List of SparseIndices
     '''
-    T = itertools.product(*entries)
-    if dims:
-        T = [MultiIndex(zip(dims, t)) for t in T]
-    else:
-        T = [MultiIndex(t) for t in T] 
-    return T
+    return [MultiIndex(zip(dims or range(len(entries)), t),sparse=True) for t in itertools.product(*entries)]
+
 
 class MixedDifferences(object):
     r'''
@@ -452,7 +464,11 @@ class MixedDifferences(object):
     represent the associated first order mixed differences
     :math:`\Delta_{\text{mix}} f\colon \mathbb{N}^n \to Y`
     '''
-    def __init__(self, f, store_output=True):
+    def reset(self):
+        if self.store_output:
+            self.outputs = dict()
+    
+    def __init__(self, f, store_output=True,zipped=True,c_var=None,reparametrization=False):
         r'''
         :param f: :math:`f\colon \mathbb{N}^n \to Y` 
         f may return tuple (work_model,value), in which case also the work is kept track of
@@ -460,6 +476,16 @@ class MixedDifferences(object):
         :type store_output: Boolean.
         '''
         self.f = f;
+        self.c_var=c_var
+        self.zipped=zipped
+        self.reparametrization=reparametrization
+        if not self.zipped:
+            if not self.c_var:
+                raise ValueError('Must specify number of variables')
+            if self.reparametrization:
+                self.f=lambda mi: f(*MultiIndex([2**v for v in mi.full_tuple(c_dim=self.c_var)]).full_tuple(c_dim=self.c_var))
+            else:
+                self.f=lambda mi: f(*mi.full_tuple(c_dim=self.c_var))
         self.store_output = store_output
         if self.store_output:
             self.outputs = dict()
@@ -471,14 +497,14 @@ class MixedDifferences(object):
         :param mi: Input :math:`\mathbf{k}` of mixed difference
         :return: :math:`(\Delta_{\text{mix}} f)(\mathbf{k})` or tuple (work,:math:`(\Delta_{\text{mix}} f)(\mathbf{k})`) if work is kept track of
         '''
-        y = list()
+        y = []
         track_work = False
         total_work = 0
         dims=mi.active_dims()
         for down in cartesian_product([[0, 1]] * len(dims), dims):
             tmi = mi - down
             if not self.store_output or tmi not in self.outputs:
-                output = self.f(tmi)
+                output=self.f(tmi)
                 if self.store_output:
                     self.outputs[tmi] = output
                 found = False
@@ -498,10 +524,7 @@ class MixedDifferences(object):
             return (total_work, sum(y)) 
         else:
             return sum(y)
-        
-    def reset(self):
-        if self.store_output:
-            self.outputs = dict()
+
 
 def combination_rule(mis, function=None):
     '''
