@@ -30,7 +30,7 @@ class TestSparseIndex(unittest.TestCase):
         self.assertFalse(T != MultiIndex((0, 5, 0)))
         C = B - A
         self.assertEqual(C.full_tuple(), (0, 0, 0, 0, 2))
-        D = MultiIndex(list(zip([0, 2, 3], [4, 2.4, 4])))
+        D = MultiIndex(zip([0, 2, 3], [4, 2.4, 4]),sparse=True)
         self.assertEqual(D.sparse_tuple(), ((0, 4), (2, 2.4), (3, 4)))
         self.assertEqual(D.full_tuple(5), (4, 0, 2.4, 4, 0))
         

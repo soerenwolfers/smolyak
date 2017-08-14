@@ -1,8 +1,8 @@
 '''
-Test smolyak.misc.r_function
+Test smolyak.aux.r_function
 '''
 import unittest
-from smolyak.misc.collections import RFunction
+from smolyak.aux.more_collections import RFunction
 
 class TestRFunction(unittest.TestCase):
 

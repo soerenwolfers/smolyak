@@ -19,7 +19,6 @@ def kl1D(y, N, exponent, order=1):
     d = y.shape[1]
     expression_string = diffusion_coefficient(d, exponent)
     for j in range(y.shape[0]):
-        # Compute solution
         arg_dict = { 'y%d' % (i + 1): v for i, v in enumerate(y[j, :])}
         arg_dict['degree'] = 2 * deg
         D = Expression(expression_string, **arg_dict)
@@ -36,7 +35,6 @@ def kl1D(y, N, exponent, order=1):
         solver.solve()
         integrand = u * dx
         a = assemble(integrand)
-        # print(a)
         output[j] = a
     return output
 
@@ -52,7 +50,3 @@ def diffusion_coefficient(d, exponent):
             expression += 'cos({}*pi*x[0])'.format(dd)
     expression += ')'
     return expression
-
-if __name__ == '__main__':
-    kl1D(np.array([[1, 1], [1, 1]]), 32, order=1)
-    

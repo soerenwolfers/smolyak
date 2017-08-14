@@ -3,8 +3,8 @@ Multi-index weighted polynomial approximation
 '''
 from smolyak.applications.polynomials.weighted_polynomial_approximator import WeightedPolynomialApproximator
 from smolyak.indices import MixedDifferences
-from smolyak.misc.v_function import VFunction
-from smolyak.misc.collections import DefaultDict
+from smolyak.aux.v_function import VFunction
+from smolyak.aux.more_collections import DefaultDict
 import copy
 from smolyak import indices
 from smolyak.indices import MultiIndex, cartesian_product
@@ -84,7 +84,7 @@ class MIWeightedPolynomialApproximator(object):
             work += self.WPAs[mi_acc].update_approximation(self._pols_from_mis(mis_pols))
             if work>0:
                 pa = self.WPAs[mi_acc].get_approximation()
-                contributions.update({mi_acc+mi.rightshift(self.c_dim_acc): pa.norm(self._pols_from_mi(mi)) for mi in mis_pols})
+                contributions.update({mi_acc+mi.shifted(self.c_dim_acc): pa.norm(self._pols_from_mi(mi)) for mi in mis_pols})
         return work, contributions
     
     def reset(self):
@@ -109,7 +109,7 @@ class MIWeightedPolynomialApproximator(object):
         return work
 
     def __handle_mis(self, mis):
-        mis_pols = [mi.leftshift(self.c_dim_acc) for mi in mis]
+        mis_pols = [mi.shifted(-self.c_dim_acc) for mi in mis]
         mi_acc = mis[0].mod(self.is_bundled)
         return mis_pols, mi_acc
      

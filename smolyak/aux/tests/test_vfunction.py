@@ -1,8 +1,8 @@
 '''
-Test smolyak.misc.v_function
+Test smolyak.aux.v_function
 '''
 import unittest
-from smolyak.misc.v_function import VFunction
+from smolyak.aux.v_function import VFunction
 
 class TestVFunction(unittest.TestCase):
 

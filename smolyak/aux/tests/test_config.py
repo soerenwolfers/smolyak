@@ -1,5 +1,5 @@
 import unittest
-from smolyak.misc.config import Config, lower, to_bool, to_string, to_float,\
+from smolyak.aux.config import Config, lower, to_bool, to_string, to_float,\
     final
 
 class TestConfig(unittest.TestCase):
@@ -17,7 +17,7 @@ class TestConfig(unittest.TestCase):
         print(opts)
         opts.enforce_rule(to_bool)
         print(opts)
-        opts2=Config(rules)
+        opts2=Config(rules=rules)
         opts2.set_defaults(opts)
         print(opts2)
         
@@ -25,14 +25,14 @@ class TestConfig(unittest.TestCase):
         opts.set_defaults({'testing':'True','test':125})
         opts['great']='Yo'
         fork=opts.fork('fork')
-        print(opts.dict)
+        print(opts._dict)
         print(opts['great'])
         print(fork['great'])
         print(opts['fork']['great'])
         
     def test_rules(self):
         rules=[to_string,to_float]
-        opts=Config(rules)
+        opts=Config(rules=rules)
         opts[12]=12
         opts['False']='True'
         print(opts)

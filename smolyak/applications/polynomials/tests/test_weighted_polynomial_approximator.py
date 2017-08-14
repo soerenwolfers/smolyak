@@ -6,8 +6,8 @@ import numpy as np
 from smolyak.applications.polynomials.weighted_polynomial_approximator import WeightedPolynomialApproximator
 from smolyak.indices import cartesian_product
 from smolyak import indices
-from smolyak.applications.polynomials.polynomial_subspaces import UnivariatePolynomialSubspace, \
-    TensorPolynomialSubspace
+from smolyak.applications.polynomials.polynomial_spaces import UnivariatePolynomialSpace, \
+    TensorPolynomialSpace
 
 class TestWeightedPolynomialApproximator(unittest.TestCase):
         
@@ -23,8 +23,8 @@ class TestWeightedPolynomialApproximator(unittest.TestCase):
         d = 2
         def function(X):
             return np.ones(shape=(X.shape[0], 1))  # np.prod(np.sin(3 * X), axis=1)
-        ups = UnivariatePolynomialSubspace(measure='h')
-        ps = TensorPolynomialSubspace(ups=ups, c_var=2, sampler='optimal')
+        ups = UnivariatePolynomialSpace(measure='h')
+        ps = TensorPolynomialSpace(ups=ups, c_var=2, sampler='optimal')
         P = WeightedPolynomialApproximator(function=function, ps=ps)
         sparseindices = cartesian_product([range(2)] * d)
         P.expand(sparseindices)
@@ -64,8 +64,8 @@ class TestWeightedPolynomialApproximator(unittest.TestCase):
     def fixd(self, measure, d):
         def function(X):
             return np.prod(np.sin(3 * X), axis=1)
-        ups = UnivariatePolynomialSubspace(measure=measure,interval=(-2,1))
-        ps = TensorPolynomialSubspace(ups=ups, c_var=d, sampler='optimal')
+        ups = UnivariatePolynomialSpace(measure=measure,interval=(-2,1))
+        ps = TensorPolynomialSpace(ups=ups, c_var=d, sampler='optimal')
         P = WeightedPolynomialApproximator(function, ps)
         sparseindices = cartesian_product([range(2)] * d)
         P.expand(sparseindices)
@@ -85,11 +85,11 @@ class TestWeightedPolynomialApproximator(unittest.TestCase):
     def adaptive(self, measure):
         def function(X):
             return np.prod(np.sin(3 * X), axis=1)
-        ups = UnivariatePolynomialSubspace(measure=measure)
+        ups = UnivariatePolynomialSpace(measure=measure)
         P = WeightedPolynomialApproximator(function, ps=ups)
         sparseindices = cartesian_product([range(4)] * 1)
         P.expand(sparseindices)
-        ps = TensorPolynomialSubspace(ups=ups,c_var=1)
+        ps = TensorPolynomialSpace(ups=ups,c_var=1)
         self.assertAlmostEqual(ps.plot_optimal_distribution(N=200), 1, delta=0.2)
         P.plot_xy()
         M = 100

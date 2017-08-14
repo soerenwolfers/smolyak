@@ -7,13 +7,13 @@ import timeit
 from smolyak.applications.polynomials.mi_weighted_polynomial_approximator import MIWeightedPolynomialApproximator
 from smolyak.approximator import Approximator
 from smolyak.applications.pde.poisson import poisson_kink
-from smolyak.misc import plots
+from smolyak.aux import plots
 from matplotlib2tikz import save as tikz_save
 import matplotlib.pyplot as plt
 from smolyak.indices import \
     pyramid, rectangle
-from smolyak.applications.polynomials.polynomial_subspaces import TensorPolynomialSubspace,\
-    UnivariatePolynomialSubspace
+from smolyak.applications.polynomials.polynomial_spaces import TensorPolynomialSpace,\
+    UnivariatePolynomialSpace
 from smolyak.decomposition import Decomposition
 
 def adaptive_multilevel(pardim):
@@ -23,7 +23,7 @@ def adaptive_multilevel(pardim):
     runtimes = []
     As=[]
     for step in range(CSTEPS):
-        ps=TensorPolynomialSubspace(ups=UnivariatePolynomialSubspace(),c_var=pardim)
+        ps=TensorPolynomialSpace(ups=UnivariatePolynomialSpace(),c_var=pardim)
         mipa = MIWeightedPolynomialApproximator(PDE, c_dim_acc=1,ps=ps)
         SA = Approximator(decomposition=mipa.expand, 
                             init_dims=pardim+1,
@@ -90,7 +90,7 @@ def nonadaptive_multilevel(pardim):
     Gamma_LS=pardim
     Beta_LS=kappa
     for step in range(CSTEPS):
-        ps=TensorPolynomialSubspace(ups_list=[UnivariatePolynomialSubspace(interval=(-1,1))])
+        ps=TensorPolynomialSpace(ups_list=[UnivariatePolynomialSpace(interval=(-1,1))])
         mipa = MIWeightedPolynomialApproximator(PDE, c_dim_acc=1,ps=ps)
         problem = Decomposition(decomposition=mipa.expand, n=pardim, 
                                        is_bundled=lambda dim: dim>0,
@@ -125,7 +125,7 @@ def nonadaptive_singlelevel(pardim):
     for step in range(CSTEPS):
         def PDE(X, mi):
             return poisson_kink(X, 64*2**(kappa/2.*step), order=1)
-        ps=TensorPolynomialSubspace(ups=UnivariatePolynomialSubspace(interval=[-1,1]),c_var=pardim)
+        ps=TensorPolynomialSpace(ups=UnivariatePolynomialSpace(interval=[-1,1]),c_var=pardim)
         mipa = MIWeightedPolynomialApproximator(PDE, c_dim_acc=0,ps=ps)
         SA = Approximator(decomposition=mipa.expand, 
                             init_dims=pardim,
@@ -214,4 +214,4 @@ if __name__ == '__main__':
     cProfile.run('nonadaptive_multilevel(3)', 'restats')
     import pstats
     p = pstats.Stats('restats') 
-    p.sort_stats('cumulative').print_stats(20)
+    p.sort_stats('cumulative').print_runtime(20)

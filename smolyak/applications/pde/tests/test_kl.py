@@ -3,7 +3,7 @@ Test smolyak.pde.elliptic
 '''
 import unittest
 from smolyak.applications.pde.kl import kl
-from smolyak.misc.plots import plot_convergence
+from smolyak.aux.plots import plot_convergence
 import numpy as np
 import matplotlib.pyplot as plt
 import timeit

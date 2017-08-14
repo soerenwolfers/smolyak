@@ -6,13 +6,13 @@ from __future__ import division
 import numpy as np
 import matplotlib.pyplot as plt
 import timeit
-from smolyak.misc import plots
+from smolyak.aux import plots
 from smolyak.applications.polynomials.mi_weighted_polynomial_approximator import MIWeightedPolynomialApproximator
 from smolyak.approximator import Approximator
 from smolyak.applications.pde.kl1D import kl1D
 from matplotlib2tikz import save as tikz_save
 from smolyak.applications.polynomials.polynomial_subspace import MultivariatePolynomialSubspace,\
-    UnivariatePolynomialSubspace
+    UnivariatePolynomialSpace
 from smolyak.decomposition import Decomposition
     
 def kl_nonadaptive():
@@ -27,13 +27,13 @@ def kl_nonadaptive():
     scale=np.log(4)
     As=[]
     for L in range(L_min,L_max):
-        ps=MultivariatePolynomialSubspace(ups_list=[UnivariatePolynomialSubspace()])
+        ps=MultivariatePolynomialSubspace(ups_list=[UnivariatePolynomialSpace()])
         mipa = MIWeightedPolynomialApproximator(PDE, c_dim_acc=1,ps=ps)
         def work(mis):
             mi=mis[0]   
-            return 2.**mi[0]*np.prod([2.**v for __,v in mi.leftshift()])
+            return 2.**mi[0]*np.prod([2.**v for __,v in mi.shifted(-1)])
         def contribution(mi):
-            return 4.**(-mi[0])*np.prod([np.exp(-np.log(xi*(dim+1)**exponent)*(2.**(v-1))) for dim,v in mi.leftshift()])
+            return 4.**(-mi[0])*np.prod([np.exp(-np.log(xi*(dim+1)**exponent)*(2.**(v-1))) for dim,v in mi.shifted(-1)])
         SA = Approximator(decomposition=mipa.expand,
                             is_bundled=lambda dim: dim>=1, 
                             work_factor=work,
@@ -63,7 +63,7 @@ def kl_adaptive():
     runtimes = []
     As=[]
     for step in range(CSTEPS):
-        ps=MultivariatePolynomialSubspace(ups=UnivariatePolynomialSubspace(),c_var=55,sampler='optimal')
+        ps=MultivariatePolynomialSubspace(ups=UnivariatePolynomialSpace(),c_var=55,sampler='optimal')
         mipa = MIWeightedPolynomialApproximator(PDE, c_dim_acc=1,ps=ps)
         problem = Decomposition(decomposition=mipa.expand, n='inf', 
                                        init_dims=1, is_bundled=lambda dim: dim>=1, 
@@ -96,4 +96,4 @@ if __name__ == '__main__':
     cProfile.run('kl_adaptive()', 'restats')
     import pstats
     p = pstats.Stats('restats') 
-    p.sort_stats('cumulative').print_stats(20)
+    p.sort_stats('cumulative').print_runtime(20)

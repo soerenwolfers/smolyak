@@ -1,9 +1,9 @@
 '''
-Test smolyak.misc.grid_evaluation
+Test smolyak.aux.grid_evaluation
 '''
 import unittest
 import numpy as np
-from smolyak.misc.np_tools import grid_evaluation
+from smolyak.aux.np_tools import grid_evaluation
 
 class TestGridEvaluation(unittest.TestCase):
 

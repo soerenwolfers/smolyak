@@ -1,8 +1,8 @@
 '''
-Test smolyak.misc.plots
+Test smolyak.aux.plots
 '''
 import unittest
-from smolyak.misc.plots import plot_convergence
+from smolyak.aux.plots import plot_convergence
 
 class TestPlots(unittest.TestCase):
 

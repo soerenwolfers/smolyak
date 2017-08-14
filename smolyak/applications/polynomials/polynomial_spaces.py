@@ -3,15 +3,15 @@ import numpy as np
 from smolyak.applications.polynomials.orthogonal_polynomials import evaluate_orthonormal_polynomials
 import warnings
 from scipy.linalg import solve
-from smolyak.misc.np_tools import grid_evaluation
+from smolyak.aux.np_tools import grid_evaluation
 import copy
 import matplotlib.pyplot as plt
 from matplotlib import cm
 
 
-class PolynomialSubspace:
+class PolynomialSpace:
     '''
-    Polynomial subspace for least-squares polynomial approximation on open 
+    Vector space of polynomials for least-squares polynomial approximation on open 
     subsets of euclidean space.
     
     Combines domain (in form of probability space) with description
@@ -82,15 +82,14 @@ class PolynomialSubspace:
         if self.WARNING and not np.isfinite(coefficients).all():
             warnings.warn('Numerical instability encountered')
         return {pol: coefficients[i] for i, pol in enumerate(self.basis)}
-    
-                
+         
     def get_active_dims(self):
         if self.basis:
             return set.union(*[set(pol.active_dims()) for pol in self.basis]) 
         else:
             return set()
     
-class UnivariatePolynomialSubspace(PolynomialSubspace):
+class UnivariatePolynomialSpace(PolynomialSpace):
     '''
     Univariate polynomial subspace.
     
@@ -102,11 +101,10 @@ class UnivariatePolynomialSubspace(PolynomialSubspace):
     def evaluate_basis(self, X):
         return evaluate_orthonormal_polynomials(
             np.squeeze(X),
-            max(self.pols), 
+            max(self.basis), 
             measure=self.probability_space.measure, 
             interval=self.probability_space.interval
         )[:,self.basis]
-     
            
     def expand_basis(self, polynomials):
         '''
@@ -130,7 +128,7 @@ class UnivariatePolynomialSubspace(PolynomialSubspace):
         plt.show()
         return np.sum(Z) / Z.size
     
-class TensorPolynomialSubspace(PolynomialSubspace):
+class TensorPolynomialSpace(PolynomialSpace):
     '''
     Multivariate polynomial subspace.
     

@@ -5,7 +5,7 @@ import unittest
 from smolyak.approximator import Approximator
 import numpy as np
 from smolyak.applications.polynomials.mi_weighted_polynomial_approximator import MIWeightedPolynomialApproximator
-from smolyak.misc.time import snooze
+from smolyak.aux.time import snooze
 import cProfile
 import pstats
 from smolyak.decomposition import Decomposition
@@ -22,7 +22,7 @@ class TestMIWeightedPolynomialApproximator(unittest.TestCase):
         """finish any test"""
         p = pstats.Stats(self.pr)
         p.strip_dirs()
-        p.sort_stats('cumulative').print_stats(20)
+        p.sort_stats('cumulative').print_runtime(20)
         print "\n--->>>"
 
     def foo(self, approximation_type):
@@ -32,26 +32,26 @@ class TestMIWeightedPolynomialApproximator(unittest.TestCase):
         cdim_par = 1
         MIWPA = MIWeightedPolynomialApproximator(function=function, cdim_acc=cdim_acc, cdim_par=cdim_par)
         if approximation_type == 'continuation':
-            problem=Decomposition(decomposition=MIWPA.expand,init_dims=cdim_acc + cdim_par, is_bundled=lambda dim: dim >= cdim_acc,
+            decomp=Decomposition(func=MIWPA.expand,init_dims=cdim_acc + cdim_par, is_bundled=lambda dim: dim >= cdim_acc,
                               external=True)
-            SA = Approximator(problem)
+            SA = Approximator(decomp)
             SA.continuation(L_min=1, T_max=10, work_exponents=[np.log(2), np.log(2), np.log(2)],
                             contribution_exponents=[np.log(2), np.log(2), 2], reset=MIWPA.reset)
         elif approximation_type == 'adaptive':
-            problem=Decomposition(decomposition=MIWPA.expand,
+            decomp=Decomposition(func=MIWPA.expand,
                               init_dims=cdim_acc + cdim_par, is_bundled=lambda dim: dim >= cdim_acc,
                               have_work_factor=lambda dim: dim >= cdim_acc,
                               work_factor=MIWPA.estimated_work,
                               external=True)
-            SA = Approximator(problem)
+            SA = Approximator(decomp)
             SA.expand_adaptive(c_steps=75, T_max=4, reset=MIWPA.reset)   
         elif approximation_type == 'nonadaptive':
-            problem=Decomposition(decomposition=MIWPA.expand,
+            decomp=Decomposition(decomposition=MIWPA.expand,
                               init_dims=cdim_acc + cdim_par, is_bundled=lambda dim: dim >= cdim_acc,
                               work_factor=[np.log(2), np.log(2), np.log(2)],
                               contribution_factor=[np.log(2), np.log(2), 2],
                               external=True)
-            SA = Approximator(problem)
+            SA = Approximator(decomp)
             SA.expand_nonadaptive(10, 3)
         if not approximation_type == 'nonadaptive':
             print([SA.get_contribution_exponent(dim) for dim in range(cdim_acc + cdim_par)])

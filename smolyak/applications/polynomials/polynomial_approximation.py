@@ -1,9 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D  # @UnusedImport
-from smolyak.misc.np_tools import grid_evaluation
+from smolyak.aux.np_tools import grid_evaluation
 import copy
-from smolyak.misc.collections import RFunction
+from smolyak.aux.more_collections import RFunction
 
 class PolynomialApproximation(object):
     def __init__(self,ps=None,coefficients=None):
