@@ -23,54 +23,80 @@ import argparse
 import importlib
 import random
 import string
+import re
+from multiprocessing import Lock, Pool
+import cPickle
+from argparse import RawTextHelpFormatter
+MSG_MEMPROF = 'Could not store memory profiler. Install memory_profiler via pip install memory_profiler.'
+MSG_SOURCE = 'Could not find source code'
+MSG_SERIALIZER = ('Could not find dill. Some items might not be storable. '
+    + ('Storage of numpy arrays will be slow' if sys.version[0] < 3 else '')
+    + 'Install dill via pip install dill.')
+MSG_STORE_RESULT = 'Could not serialize results'
+MSG_STORE_INFO = lambda keys: 'Could not store keys {}.'.format(keys)
+MSG_FINISH_EXPERIMENT = lambda i, runtime: 'Experiment {} finished. Runtime: {}'.format(i, runtime)
+MSG_RUNTIME_SIMPLE = lambda runtime: 'Runtime: ' + str(runtime) + 's. For more detailed information use \'runtime_profile=True\''
+MSG_FINISHED = 'Done'
+MSG_NO_MATCH = 'Could not find matching experiment series'
+MSG_MULTI_MATCH = lambda series:'Multiple matching experiment series (to iterate through all use need_unique=False):\n{}'.format('\n'.join(series))
+MSG_UNUSED = 'Passed configuration dictionary is unused when running experiment series with function'
+MSG_ERROR_LOAD = lambda name: 'Error loading {}'.format(name)
+MSG_ANALYSIS = 'Performing analysis'
+GRP_WARN = 'Warning'
+GRP_ERR = 'Error'
 
-def conduct(func, tests, name=None, path='experiments', supp_data=None,
-            analyze=None,runtime_profile=False, memory_profile=False, 
-            no_date=False, no_dill=False):
+def conduct(func, experiments, name=None, path='experiments', supp_data=None,
+            analyze=None, runtime_profile=False, memory_profile=False,
+            no_date=False, no_dill=False,parallel=True):
     '''   
-    Call :code:`func` once for each entry of :code:`tests` and store
+    Call :code:`func` once for each entry of :code:`experiments` and store
     results along with auxiliary information such as runtime and memory usage.
-    Multiple parameters need to be simulated with lists or dictionaries, e.g.
-            def func(test):
-                return test[0]**test[1]
-            tests=[[x,2] for x in range(10)]
-        or
-            def func(test):
-                return test['a']*test['x']**test['exponent']
+    Each entry of experiments is passed as a whole to :code:`func`, e.g.:
+            def func(experiment):
+                return experiment['a']*experiment['x']**experiment['exponent']
             base={'exponent':2,'a':5}
-            tests=[dict(x=x,**base) for x in range(10)]
-
-    More realistically, :code:`func` can be a numerical algorithm and 
-    :code:`tests` can be a list of different mesh resolutions, a list of different
+            experiments=[dict('x'=x,**base) for x in range(10)]
+            conduct(func,experiments)
+    In practice, :code:`func` can be a numerical algorithm and :code:`experiments` 
+    can be a list of different mesh resolutions, a list of different
     subroutines, etc.
     
-    Use hierarchical, date-oriented, filesystem to store results of test series
-    in folder :code:`name` that contains:
+    This function stores the following files and directories in a directory 
+    specified by :code:`name` and :code:`path`:
         *info.pkl:
-            *name: Name of test series (str)
+            *name: Name of experiment series (str)
             *time: Time of execution (datetime.datetime)
-            *func: Parameter :code:`func`
-            *tests: Parameter :code:`tests`
-            *runtime: Runtime of each test (list of floats)
-            *status: Status of each test (list of ('queued'/'finished'/'failed'))
+            *experiments: Parameter :code:`experiments`
+            *runtime: Runtime of each experiment (list of floats)
+            *status: Status of each experiment (list of ('queued'/'finished'/'failed'))
             *(optional)supp_data: Parameter :code:`supp_data`
-            *(optional)runtime_profile: Extensive runtime information for each test (list of strings)
-            *(optional)memory_profile: Memory usage information for each test (list of strings)
+        *log.txt
+        *results.pkl: List of results of experiments 
+        *source.txt: Source code of the module containing :code:`func`
+        *(optional)stderr.txt
+        *For each experiment a subdirectory "experiment<i>" with:
+            *user_files/ (Working directory for call of :code:`func`)
+            *input.txt: Argument passed to :code:`func`
+            *stderr.txt:
+            *stdout.txt:
+            *(optional)runtime_profile.txt: Extensive runtime information for each experiment (list of strings)
+            *(optional)memory_profile.txt: Memory usage information for each experiment (list of strings)
+        *(optional) analysis/: output of function :analysis:
+            *stderr.txt
+            *stdout.txt
+            *user_files/ (Working directory for call of :code:`analyze`
 
-        *results.pkl: Outputs of tests
-        
-        *working directories 'test<i>' for each test
         
     Both info.pkl and results.pkl are created with pickle, for technical
     reasons they contain multiple concatenated pickle streams. To load these files,
     and automatically join the contents of info.pkl into a single dictionary and
-    the contents of results.pkl into a single list, use load_test_series 
+    the contents of results.pkl into a single list, use function :code:`load` 
      
-    :param func: Function to be called with different test configurations
+    :param func: Function to be called with different experiment configurations
     :type func: function
-    :param tests: Test configurations
-    :type tests: Iterable
-    :param name: Unique name of test series. Using func.__name__ if not provided
+    :param experiments: Experiment configurations
+    :type experiments: Iterable
+    :param name: Unique name of experiment series. Using func.__name__ if not provided
     :type name: String
     :param path: Root directory for storage, absolute or relative 
     :type path: String
@@ -89,74 +115,55 @@ def conduct(func, tests, name=None, path='experiments', supp_data=None,
         Lambda functions, or not-module level functions. As an alternative, this
         function uses dill (if available) unless this parameter is set to True.
     :type no_dill: Boolean.
-    
-    #TODO: Online analysis, 
     '''
     if not name:
         try: 
-            name=func.__name__
+            name = func.__name__
         except AttributeError:
-            name=func.__class__.__name__
-    if not no_date:
-        date = datetime.date.today()
-        #directory = os.path.join(path, str(date.year), str(date.month), str(date.day), name)
-        #directory = os.path.join(path,'{:02d}'.format(date.month)+'_'+str(date.year)[-2:], name)
-        directory = os.path.join(path, date.strftime('%W'), name)
-    else:
-        directory = os.path.join(path, name)
-    directory = os.path.abspath(directory)
-    moved=False
-    if os.path.exists(directory):
-        new_directory=_archive(directory)
-        if new_directory!='directory':
-            moved=True
-            directory=new_directory
-    try:
-        os.makedirs(directory)
-    except OSError as exc:  # Guard against race condition
-        if exc.errno != errno.EEXIST:
-            raise
-    log_file=os.path.join(directory,'log.txt')
-    log=Log(write_verbosity=True,print_verbosity=True, file_name=log_file)
-    if moved:
-        log.log('Using subdirectory {}'.format(directory))
-    log.log('Starting experiment series \'{}\' with {} experiments:\n\t{}'.format(name,len(tests),'\n\t'.join(map(str,tests))))
-    info_file = os.path.join(directory, 'info.pkl')
+            name = func.__class__.__name__
+    directory = _get_directory(name, path, no_date)
+    ###########################################################################
+    log_file = os.path.join(directory, 'log.txt')
     results_file = os.path.join(directory, 'results.pkl')
+    info_file = os.path.join(directory, 'info.pkl')
+    source_file_name = os.path.join(directory, 'source.txt')
+    ###########################################################################
+    MSG_START = 'Starting experiment series \'{}\' with {} experiments:\n\t{}'.format(name, len(experiments), '\n\t'.join(map(str, experiments)))
+    MSG_INFO = 'This log and all outputs can be found in {}'.format(directory)
+    MSG_TYPE = (('# Experiment series was conducted with instance of class {}'.format(func.__class__.__name__)
+               if hasattr(func, '__class__') else 
+               '# Experiment series was conducted with function {}'.format(func.__name__))
+              + ' in the following module: \n')
+    ###########################################################################
+    log = Log(write_verbosity=True, print_verbosity=True, file_name=log_file)
+    log.log(MSG_START)
+    log.log(MSG_INFO)
     info = dict()
     info['name'] = name
     info['time'] = datetime.datetime.fromtimestamp(time.time())
     if supp_data:
         info['supp_data'] = supp_data
-    info['runtime'] = [None] * len(tests)
+    info['runtime'] = [None] * len(experiments)
     if memory_profile:
         try:
-            import memory_profiler
+            import memory_profiler  # @UnusedImport
+            info['memory']=[None]*len(experiments)
         except ImportError:
-            warning='Could not store memory profiler. Install memory_profiler via pip install memory_profiler.'
-            log.log(group='Warning',message=warning)
+            log.log(group=GRP_WARN, message=MSG_MEMPROF)
             memory_profile = False
-    info['status'] = ['queued'] * len(tests)
+    info['status'] = ['queued'] * len(experiments)
     try: 
-        if hasattr(func,'__class__'):
-            source='# Experiment series was conducted with instance of class {}'.format(func.__class__.__name__)
-        else:
-            source='# Experiment series was conducted with function {}'.format(func.__name__)
-        source=source+' in the following module: \n'+''.join(inspect.getsourcelines(sys.modules[func.__module__])[0])
+        source = MSG_TYPE + ''.join(inspect.getsourcelines(sys.modules[func.__module__])[0])
     except TypeError:
-        log.log(group='Warning',message='Could not find source code')
-    info_list = [info, {'tests':tests}]
+        log.log(group=GRP_WARN, message=MSG_SOURCE)
+    info_list = [info, {'experiments':experiments}]
     if not no_dill:
         try: 
             import dill
             serializer = dill
         except ImportError:
             serializer = pickle
-            warning = 'Could not find dill. Some items might not be storable. '
-            if sys.version[0] < 3:
-                warning += 'Storage of numpy arrays will be slow. '
-            warning += 'Install dill via pip install dill.'
-            log.log(group='Warning',message=warning)
+            log.log(group=GRP_WARN, message=MSG_SERIALIZER)
     else:
         serializer = pickle
     def store_info():
@@ -165,137 +172,256 @@ def conduct(func, tests, name=None, path='experiments', supp_data=None,
                 try:
                     serializer.dump(temp, fp)
                 except (TypeError, pickle.PicklingError):
-                    warning='Could not store keys {}.'.format(temp.keys())
-                    log.log(group='Warning',message=warning)
+                    log.log(group=GRP_WARN, message=MSG_STORE_INFO(temp.keys()))
+    def _update_info(i,runtime,status,memory):
+        info['runtime'][i]=runtime
+        if memory_profile:
+            info['memory'][i]=memory
+        info['status'][i]=status     
+        store_info()
     def store_result(result):
         with open(results_file, 'ab') as fp:
             try:
                 serializer.dump([result], fp)
-            except (TypeError,pickle.PicklingError):
-                warning='Could not store results'
-                log.log(group='Warning',message=warning)
-    def store_test_data(name,data,i):
-        if data:
-            file_name=os.path.join(directory,'test{}'.format(i),name+'.txt')
-            with open(file_name,'a') as fp:
-                fp.write(data)
+            except (TypeError, pickle.PicklingError):
+                log.log(group=GRP_WARN, message=MSG_STORE_RESULT)
     store_info()
-    source_file_name=os.path.join(directory,'source.txt')
-    with open(source_file_name,'w') as fp:
-        fp.write(source)
+    _store_data(source_file_name,source)
     old_wd = os.getcwd()
-    if analyze:
-        analysis_directory=os.path.join(directory,'analysis')
-        os.mkdir(analysis_directory)
-    for i, test in enumerate(tests):
-        log.log('Starting test {} with:\n\t{}'.format(i, str(test)))  
-        output = None
-        if  hasattr(func,'__name__'):
-            temp_func = func
-        else:
-            temp_func = func.__call__
-        test_directory = os.path.join(directory, 'test{}'.format(i),'tmp')
-        os.makedirs(test_directory)
-        os.chdir(test_directory)
+    lock=Lock()
+    analyze_lock=Lock()
+    args=((i,experiment,directory,func,analyze,memory_profile,
+     runtime_profile,results_file,log_file,'pickle' if serializer==pickle else 'dill') 
+          for i,experiment in enumerate(experiments))
+    if parallel:
+        pool=Pool(processes=len(experiments),initializer=_init, initargs=(lock,analyze_lock))
         try:
-            if memory_profile:
-                m = StringIO()
-                temp_func = memory_profiler.profile(func=temp_func, stream=m, precision=4)
-            if runtime_profile:
-                temp_func = add_runtime(temp_func)
-            with capture_output() as c:
-                tic = timeit.default_timer()
-                output = temp_func(test)
-                runtime = timeit.default_timer() - tic
-            info['runtime'][i] = runtime
-            info['status'][i] = 'finished'
-            log.log('Test {} finished. Runtime: {}'.format(i, runtime))  
-            store_test_data('input',str(test),i)
-            store_test_data('stdout',c.stdout,i)
-            store_test_data('stderr',c.stderr,i)
-            if runtime_profile: 
-                profile, output = output
-                s = BytesIO()
-                ps = pstats.Stats(profile, stream=s)
-                ps.sort_stats('cumulative')
-                ps.print_stats()
-                store_test_data('runtime_profile',s.getvalue(), i)
-                s.close()
-            else:
-                store_test_data('runtime_profile','Runtime: '+str(runtime)+'s. For more detailed information use \'runtime_profile=True\'',i)
-            if memory_profile:
-                store_test_data('memory_profile',m.getvalue(), i)
-        except Exception:
-            store_test_data('stderr',traceback.format_exc(),i)
-            if info['status'][i] == 'queued':
-                info['status'][i] = 'failed'
-                log.log(group='Error',message='Test {} failed. Check {}'.format(i,os.path.join(directory,'test{}'.format(i),'stderr.txt')))
-            else: 
-                log.log(group='Error',message='Exception during execution of test {}. Check {}'.format(i,os.path.join(directory,'test{}'.format(i),'stderr.txt')))
-        os.chdir(directory)
-        store_result(output)
-        del output
-        gc.collect()
-        store_info()
-        if analyze:
-            try:
-                info_tmp,results_tmp=load(path=directory)
-                os.chdir(analysis_directory)
-                analyze(results_tmp,info_tmp)
-                os.chdir(directory)
-            except:
-                file_name=os.path.join(directory,'stderr.txt')
-                with open(file_name,'a') as fp:
-                    fp.write(traceback.format_exc())
-                log.log(group='Error',message='Online analysis failed. Check {}'.format(i,os.path.join(directory,'test{}'.format(i),'stderr.txt')))
+            outputs=pool.map(_run_single_experiment, args)
+        except cPickle.PicklingError:
+            log.log(group=GRP_ERR,message='Error during parallel execution. Try running with parallel=False')
+            raise
+        for output in outputs:
+            _update_info(*output)
+    else:
+        _init(lock,analyze_lock)
+        for arg in args:
+            output=_run_single_experiment(arg)
+            _update_info(*output)
     os.chdir(old_wd)
-    log.log('Done'.format(name))
+    log.log(MSG_FINISHED)
     return directory
+
+def _init(l,al):
+    global lock
+    global analyze_lock
+    lock = l
+    analyze_lock=al
     
+def _run_single_experiment(arg):
+    (i,experiment,directory,func,analyze,memory_profile,
+     runtime_profile,results_file,log_file,serializer)=arg
+    ###########################################################################
+    stderr_file = os.path.join(directory, 'stderr.txt')
+    stderr_files = lambda i: os.path.join(directory, 'experiment{}'.format(i), 'stderr.txt')
+    stdout_files = lambda i: os.path.join(directory, 'experiment{}'.format(i), 'stdout.txt')
+    input_files = lambda i: os.path.join(directory, 'experiment{}'.format(i), 'input.txt')
+    runtime_profile_files = lambda i:os.path.join(directory, 'experiment{}'.format(i), 'runtime_profile.txt')
+    memory_profile_files = lambda i:os.path.join(directory, 'experiment{}'.format(i), 'memory_profile.txt')
+    experiment_user_directories = lambda i: os.path.join(directory, 'experiment{}'.format(i), 'user_files')
+    MSG_EXCEPTION_ANALYSIS='Exception during online analysis. Check {}'.format(stderr_file)
+    MSG_FAILED_EXPERIMENT = lambda i:'Experiment {} not completed. Check {}'.format(i, stderr_files(i))
+    MSG_EXCEPTION_EXPERIMENT = lambda i: 'Exception during execution of experiment {}. Check {}'.format(i, stderr_file)
+    MSG_START_EXPERIMENT = lambda i: 'Starting experiment {} with argument:\n\t{}'.format(i, str(experiment)) 
+    ###########################################################################
+    log = Log(write_verbosity=True, print_verbosity=True, file_name=log_file,lock=lock)
+    if serializer=='pickle':
+        serializer=pickle
+    else:
+        import dill
+        serializer=dill
+    def store_result(result):
+        with open(results_file, 'ab') as fp:
+            try:
+                serializer.dump([result], fp)
+            except (TypeError, pickle.PicklingError):
+                log.log(group=GRP_WARN, message=MSG_STORE_RESULT)
+    log.log(MSG_START_EXPERIMENT(i)) 
+    runtime = None
+    output = None
+    memory = None
+    if  hasattr(func, '__name__'):
+        temp_func = func
+    else:
+        temp_func = func.__call__
+    experiment_directory = experiment_user_directories(i)
+    os.makedirs(experiment_directory)
+    os.chdir(experiment_directory)
+    try:
+        if memory_profile:
+            import memory_profiler
+            m = StringIO()
+            temp_func = memory_profiler.profile(func=temp_func, stream=m, precision=4)
+        if runtime_profile:
+            temp_func = add_runtime(temp_func)
+        stderr_append=""
+        with capture_output() as c:
+            tic = timeit.default_timer()
+            try:
+                output = temp_func(experiment)
+                status='finished'
+            except Exception:
+                status='failed'
+                stderr_append=traceback.format_exc()
+            runtime = timeit.default_timer() - tic
+        if stderr_append:
+            log.log(group=GRP_ERR, message=MSG_FAILED_EXPERIMENT(i))
+        _store_data(stderr_files(i), c.stderr+stderr_append)
+        _store_data(stdout_files(i), c.stdout)
+        _store_data(input_files(i), str(experiment))
+        if runtime_profile: 
+            profile, output = output
+            s = BytesIO()
+            ps = pstats.Stats(profile, stream=s)
+            ps.sort_stats('cumulative')
+            ps.print_stats()
+            _store_data(runtime_profile_files(i), s.getvalue())
+            s.close()
+        else:
+            _store_data(runtime_profile_files(i), MSG_RUNTIME_SIMPLE(runtime))
+        if memory_profile:
+            _store_data(memory_profile_files(i), m.getvalue())
+            memory=_max_mem(m.getvalue())
+    except Exception:
+        lock.acquire()
+        _store_data(stderr_file, traceback.format_exc())
+        lock.release()
+        log.log(group=GRP_ERR, message=MSG_EXCEPTION_EXPERIMENT(i))
+    if status=='finished':
+        log.log(MSG_FINISH_EXPERIMENT(i, runtime))   
+    os.chdir(directory)
+    lock.acquire()
+    store_result(output)
+    lock.release()
+    del output
+    gc.collect()
+    if analyze:
+        log.log(message=MSG_ANALYSIS)
+        analyze_lock.acquire()
+        try:
+            globals()['analyze'](func=analyze,path=directory,log=log)
+        except:
+            _store_data(stderr_file, traceback.format_exc())
+            log.log(group=GRP_ERR, message=MSG_EXCEPTION_ANALYSIS)
+        analyze_lock.release()
+    return (i,runtime,status,memory)
+
+def _store_data(file_name, data):
+        if data:
+            with open(file_name, 'a') as fp:
+                fp.write(data)  
+                
+def analyze(func,search_pattern='*',path='',need_unique=False,log=None,no_dill=False):
+    if not log:
+        log=Log(print_verbosity=True)
+    if not no_dill:
+        try: 
+            import dill
+            serializer = dill
+        except ImportError:
+            serializer = pickle
+            log.log(group=GRP_WARN, message=MSG_SERIALIZER)
+    else:
+        serializer = pickle
+    MSG_FAILED_ANALYSIS = lambda stderr_file: 'Analysis could not be completed. Check {}'.format(stderr_file)
+    MSG_STORE_ANALYSIS = lambda name: 'Could not serialize results of analysis'
+    for (info,results,directory) in load(search_pattern=search_pattern,path=path,need_unique=need_unique,info_only=False):
+        analysis_directory = os.path.join(directory, 'analysis')
+        shutil.rmtree(analysis_directory, ignore_errors=True)
+        os.mkdir(analysis_directory)
+        analysis_user_directory = os.path.join(analysis_directory, 'user_files')
+        shutil.rmtree(analysis_user_directory, ignore_errors=True)
+        os.mkdir(analysis_user_directory)
+        analysis_stderr_file = os.path.join(analysis_directory, 'stderr.txt')
+        analysis_stdout_file = os.path.join(analysis_directory, 'stdout.txt')
+        analysis_output_file = os.path.join(analysis_directory, 'output.pkl')
+        os.chdir(analysis_user_directory)
+        output=None
+        stderr_append=""
+        with capture_output() as c:
+            try:
+                output=func(results, info)
+            except Exception:
+                stderr_append=traceback.format_exc()
+        if stderr_append:
+            if log:
+                log.log(group=GRP_ERR, message=MSG_FAILED_ANALYSIS(analysis_stderr_file))
+            else:
+                warnings.warn(message=MSG_FAILED_ANALYSIS(analysis_stderr_file))
+        _store_data(analysis_stderr_file, c.stderr+stderr_append)
+        _store_data(analysis_stdout_file, c.stdout)
+        if output:
+            with open(analysis_output_file, 'wb') as fp:
+                try:
+                    serializer.dump(output, fp)
+                except (TypeError, pickle.PicklingError):
+                    if log:
+                        log.log(group=GRP_WARN, message=MSG_STORE_ANALYSIS)
+                    else:
+                        warnings.warn(message=MSG_STORE_ANALYSIS)
+        os.chdir(directory)          
+
 def load(search_pattern='*', path='', info_only=False, need_unique=True):
     '''
-    Load results of (possibly multiple) test series. 
+    Load results of (possibly multiple) experiment series. 
     
-    Return (list of) either tuple (info,results) of contents of info.pkl and results.pkl
-    or only content of info.pkl if :code:`info_only=True`.
+    Return (generator of) tuple (info,results,directory) with the contents of 
+    info.pkl and results.pkl as well as the directory of the experiment series
     
     :param search_pattern: Bash style search_pattern string(s) 
     :type search_pattern: String, e.g. search_pattern='algo*'
     :param path: Path of exact location is known (possibly only partially), relative or absolute
     :type path: String, e.g. '/home/work/2017/6/<name>' or 'work/2017/6'
-    :param info_only: Only load information about test series, not results
+    :param info_only: Only load information about experiment series, not results
     :type info_only: Boolean
+    :param need_unique: Require unique identification of experiment series.
+    :type need_unique: Boolean
     :return: Information about run(s) and list(s) of results
-    :rtype: If need_unique=True, a single tuple (info,results),
-    where `info` is a dictionary containing information regarding the experiment and 
-    `results` is a list containing the results of each 
+    :rtype: If need_unique=True, a single tuple (info[,results],directory),
+    where `info` is a dictionary containing information regarding the experiment
+    series and `results` is a list containing the results of each experiment.
+    If need_unique=False, a generator of tuples (info[,results],directory) 
     '''
     deserializer = pickle
     try:
         import dill
         deserializer = dill
     except ImportError:
-        warnings.warn('Could not find dill. Try installing dill via pip install dill')
+        warnings.warn(MSG_SERIALIZER)
     def assemble_file_contents(file_name, iterable, need_start=False, update=False):
-        with open(file_name, 'r') as fp:
-            output = iterable()
-            for i in itertools.count():
-                try:
-                    to_add = deserializer.load(fp)
-                except Exception as e:    
-                    if i == 0 and need_start:
-                        traceback.print_exc()
-                        raise IOError('Could not read file {}.'.format(file_name))  
-                    else:
-                        if isinstance(e, EOFError):
-                            break
+        try: 
+            with open(file_name, 'r') as fp:
+                output = iterable()
+                for i in itertools.count():
+                    try:
+                        to_add = deserializer.load(fp)
+                    except Exception as e:    
+                        if i == 0 and need_start:
+                            raise
                         else:
-                            warnings.warn('Could not load all contents of {}'.format(file_name))
-                if update:
-                    output.update(to_add)
-                else:
-                    output += to_add
-            return output
+                            if isinstance(e, EOFError):
+                                break
+                            else:
+                                traceback.format_exc()
+                                warnings.warn(MSG_ERROR_LOAD('file '+file_name))
+                    if update:
+                        output.update(to_add)
+                    else:
+                        output += to_add
+                return output
+        except Exception:
+            traceback.format_exc()
+            warnings.warn(MSG_ERROR_LOAD('file '+file_name))
+            output=None
     series = []
     series.extend(files.find_directories(search_pattern, path=path))
     series.extend(files.find_directories('*/' + search_pattern, path=path))
@@ -307,80 +433,244 @@ def load(search_pattern='*', path='', info_only=False, need_unique=True):
         if not info_only:
             results_file_name = os.path.join(serie, 'results.pkl')
             results = assemble_file_contents(results_file_name, list, need_start=False)
-            return (info, results)
+            return (info, results,serie)
         else:
-            return info
+            return (info,serie)
     if not need_unique:
-        return [get_output(serie) for serie in series]
+        return (get_output(serie) for serie in series)
     else:
         if len(series) == 0:
-            raise ValueError('Could not find matching test series')
-
+            raise ValueError(MSG_NO_MATCH)
         if len(series) > 1:
-            raise ValueError(
-                ('Multiple matching test series (to iterate through all use '
-                 'need_unique=False):\n{}'.format('\n'.join(series)))
-            )
+            raise ValueError(MSG_MULTI_MATCH(series))
         return get_output(series[0])
 
 def _is_experiment_directory(directory):
     return os.path.isfile(os.path.join(directory, 'info.pkl'))
 
-def _archive(directory):
-    if not os.listdir(directory):#No previous usage of directory, just use it
-            newname=directory
-    else: 
-        if _is_experiment_directory(directory):#Previous series will be moved in sub v0, new series will be in sub v1
-            split_path=os.path.split(directory)
-            temp_rel=''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(8))
-            temp_directory=os.path.join(split_path[0],'.tmp',temp_rel)
-            shutil.move(directory,temp_directory)
-            shutil.move(temp_directory,os.path.join(directory,'v0'))
-            #shutil.rmtree(os.path.join(split_path[0],'tmp'))
-            #newname=os.path.join(directory,'v1')
-        version=0       #TODO: actually make sure to use latest version, even if there is a gap
-        glob
-        while os.path.exists(os.path.join(directory,'v'+str(version))):
-            version+=1
-        newname=os.path.join(directory,'v'+str(version))
-    return newname
+def _max_mem(m):
+    find=re.compile('.*?(\d{1,}\.\d{4}) MiB.*')
+    matches=[find.match(line) for line in m.splitlines()]
+    values=[float(match.groups()[0]) for match in matches if match is not None]
+    return max(values)-min(values)
 
-if __name__=='__main__':
-    parser = argparse.ArgumentParser(description='Perform experiment series. Store (and analyze) results.')
+def _get_directory(name, path, no_date):
+    if not no_date:
+        date = datetime.date.today()
+        directory = os.path.join(path, 'w' + date.strftime('%W') + 'y' + str(date.year)[-2:], name)
+    else:
+        directory = os.path.join(path, name)
+    directory = os.path.abspath(directory)
+    if os.path.exists(directory) and os.listdir(directory):
+        if _is_experiment_directory(directory):  # Previous series will be moved in sub v0, new series will be in sub v1
+            split_path = os.path.split(directory)
+            temp_rel = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(8))
+            temp_directory = os.path.join(split_path[0], '.tmp', temp_rel)
+            shutil.move(directory, temp_directory)
+            shutil.move(temp_directory, os.path.join(directory, 'v0'))
+        candidates = [os.path.split(dir)[1] for dir in os.listdir(directory)  # @ReservedAssignment
+                    if os.path.isdir(os.path.join(directory, dir))
+                    and re.search('^v([0-9]|[1-9][0-9]+)$', dir)]
+        if candidates:
+            version = max([int(dir[dir.rindex('v') + 1:]) for dir in candidates]) + 1  # @ReservedAssignment
+        else:
+            version = 0
+        directory = os.path.join(directory, 'v' + str(version))
+    try:
+        os.makedirs(directory)
+    except OSError as exc:
+        if exc.errno != errno.EEXIST:
+            raise
+    return directory
+
+if __name__ == '__main__':
+    import textwrap as _textwrap
+    class LineWrapRawTextHelpFormatter(argparse.RawDescriptionHelpFormatter):
+        def _split_lines(self, text, width):
+            text = self._whitespace_matcher.sub(' ', text).strip()
+            return _textwrap.wrap(text, width)
+    parser = argparse.ArgumentParser(formatter_class=LineWrapRawTextHelpFormatter,
+        description=
+        '''
+        Perform experiment series. Store (and analyze) results and runtime information.
+        
+        Calls given function once for each entry of given list of experiments and 
+        stores results along with auxiliary information such as runtime and memory usage.
+        Each experiments is passed as a whole to the specified function. 
+        (Exception: if a basis_config dictionary is passed, it is joined with each experiment
+        and the union is passed as keyword arguments to the specified function)
+        
+        The following files and directories are created:
+            *info.pkl:
+                *name: Name of experiment series (str)
+                *time: Time of execution (datetime.datetime)
+                *experiments: Input `experiments`
+                *runtime: Runtime of each experiment (list of floats)
+                *status: Status of each experiment (list of ('queued'/'finished'/'failed'))
+                *supp_data: The command-line command that was used to call this function
+            *log.txt
+            *results.pkl: List of results of experiments 
+            *source.txt: Source code of the specified
+            *(optional)stderr.txt
+            *For each experiment a subdirectory "experiment<i>" with:
+                *user_files/ (Working directory for call of specified function)
+                *input.txt: String representation of arguments
+                *stderr.txt
+                *stdout.txt
+                *(optional)runtime_profile.txt: Extensive runtime information for each experiment (list of strings)
+                *(optional)memory_profile.txt: Memory usage information for each experiment (list of strings)
+            *(optional) analysis/: output of function :analysis:
+                *stderr.txt
+                *stdout.txt
+                *user_files/ (Working directory for call of specified analysis function)
+        
+        Both info.pkl and results.pkl are created with pickle, for technical
+        reasons they contain multiple concatenated pickle streams. To load these files,
+        and automatically join the contents of info.pkl into a single dictionary and
+        the contents of results.pkl into a single list, the function :code:`load` may be used.
+        ''')
     parser.register('type', 'bool',
                     lambda v: v.lower() in ("yes", "true", "t", "1", "y"))
-    parser.add_argument("module",type=str,action='store',
-                        help='Module describing experiment series')
-    parser.add_argument('tests',type=str,action='store',
-                        help='List of experiment configuration')
-    parser.add_argument('-c','--config', type=str,action='store',
-                        help='Arguments for initialization',
-                        default='{}')
-    parser.add_argument('-n','--name',type=str,action='store',
-                        default='_')
-    parser.add_argument('--memory_profile', action='store_true')
-    parser.add_argument('--runtime_profile',action='store_true')
-    parser.add_argument('--no_date',action='store_true')
-    parser.add_argument('--no_dill',action='store_true')
+    parser.add_argument("func", type=str, action='store',
+        help=
+        '''
+        Specifies a function that performs the experiments. 
+                            
+        The standard way is to provide the full path of a function
+        e.g.: `foo.func`.
+        
+        There are two alternatives:
+        1) Provide the full name of a module that contains a class of the same name (up to capitalization). 
+        e.g.: `foo.bar`
+        
+        2) Provide the full name of a class.
+        e.g.: `foo.bar.Bar2`
+        
+        In both cases above, the specified class is instantiated
+         and all experiments are performed by calling this instance.
+        ''')
+    parser.add_argument('experiments', type=str, action='store',
+        help=
+        '''
+        List of experiment configurations.
+        
+        e.g.: [2**l for l in range(10)]
+        
+        Warning: If argument FUNC is a function, and if argument BASE
+        is used, this must be a list of dictionaries, which are then
+        passed to FUNC together with the items in BASE in form of keyword arguments. 
+        ''')
+    parser.add_argument('-b', '--base', type=str, action='store',
+        help=
+        '''
+        Base configuration (in form of a dictionary) for all experiments. 
+        
+        If argument FUNC is a function, this dictionary is passed
+        along each experiment in form of keyword arguments to FUNC.
+        
+        If argument FUNC specifies a class, the class is instantiated using 
+        this argument.
+        ''',
+        default='{}')
+    parser.add_argument('-n', '--name', type=str, action='store',
+        default='_',
+        help=
+        '''
+        Name of the experiment series. 
+        
+        If not provided, the name is derived from FUNC
+        ''')
+    parser.add_argument('-a', '--analyze', type=str, action='store',
+        nargs='?', const='analyze', default=None,
+        help=
+        '''
+        Function that is used to perform analysis after each experiment.
+        
+        The specified function is called with a tuple (results,info)
+        containing the content of the files results.pkl and info.pkl described above, respectively.
+        
+        By default, ANALYZE is the name of a function in the same module as FUNC.
+        
+        Alternatively, ANALYZE can be 
+        1) a full name of a function in some different module,
+        e.g.: foo2.analyze
+        
+        2) a name of a method of the class specified by FUNC
+        ''')
+    parser.add_argument('--parallel',action='store_true',
+        help=
+        '''
+        Perform experiments in parallel.
+        ''')
+    parser.add_argument('--memory_profile', action='store_true',
+        help=
+        '''
+        Store memory information for each experiment
+        ''')
+    parser.add_argument('--runtime_profile', action='store_true',
+        help=
+        '''
+        Store extensive runtime information for each experiment.
+        
+        The total time of each experiment is always stored.
+        ''')
+    parser.add_argument('--no_date', action='store_true',
+        help=
+        '''
+        Do not store experiments in subdirectories based on current date.
+        ''')
+    parser.add_argument('--no_dill', action='store_true',
+        help=
+        '''
+        Do not use dill to store info.pkl and results.pkl. This 
+        is probably a bad idea. 
+        ''')
     args, unknowns = parser.parse_known_args()
-    args.tests=eval(args.tests)
-    init_dict=eval(args.config)
-    module_name=args.module
-    module=importlib.import_module(module_name)
+    args.experiments = eval(args.experiments)
+    init_dict = eval(args.config)
+    module_name = args.func
     try:
-        class_name=module_name.split('.')[-1]
-        cl=getattr(module,class_name)
-    except AttributeError:
+        module = importlib.import_module(module_name)
+    except ImportError:
+        real_module_name = '.'.join(module_name.split('.')[:-1])
+        module = importlib.import_module(real_module_name)
+    try:  # Suppose class is last part of given module argument
+        class_or_function_name = module_name.split('.')[-1]
+        cl_or_fn = getattr(module, class_or_function_name)
+    except AttributeError:  # Or maybe last part but capitalized?
+        class_or_function_name = class_or_function_name.title()
+        cl_or_fn = getattr(module, class_or_function_name)
+    if args.name == '_':
+        args.name = class_or_function_name
+    if inspect.isclass(cl_or_fn):
+        fn = cl_or_fn(**init_dict)
+    else:
+        def fn(experiment):
+            if init_dict:
+                experiment.update(init_dict)
+            return cl_or_fn(**experiment)
+    if args.analyze:
         try:
-            class_name=class_name.title()
-            cl=getattr(module,class_name)
-        except AttributeError:
-            raise ValueError('Make sure that the specific module contains a class of the same name')
-    if args.name=='_':
-        args.name=class_name
-    ob=cl(**init_dict)#TODO: Only if this is a class, otherwise use it as function
-    conduct(func=ob, tests=args.tests, name=args.name, supp_data=sys.argv, 
-            runtime_profile=args.runtime_profile, 
-            memory_profile=args.memory_profile, 
-            no_date=args.no_date, 
-            no_dill=args.no_dill)    
+            split_analyze = args.analyze.split('.')
+            try:
+                if len(split_analyze) > 1:  # Analyze function in different module
+                    analyze_module = importlib.import_module('.'.join(split_analyze[:-1]))  
+                else:
+                    analyze_module = module
+                analyze_fn = getattr(analyze_module, split_analyze[-1])
+            except AttributeError:  # is analyze maybe a function of class instance?
+                analyze_fn = getattr(fn, args.analyze)
+        except: 
+            analyze_fn = None
+            traceback.format_exc()
+            warnings.warn(MSG_ERROR_LOAD('function {}'.format(args.analyze)))   
+    else:
+        analyze_fn = None
+    conduct(func=fn, experiments=args.experiments, name=args.name,
+            supp_data=' '.join(sys.argv),
+            analyze=analyze_fn,
+            runtime_profile=args.runtime_profile,
+            memory_profile=args.memory_profile,
+            no_date=args.no_date,
+            no_dill=args.no_dill,
+            parallel=args.parallel)
