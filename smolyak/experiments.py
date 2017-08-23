@@ -51,7 +51,7 @@ MSG_ERROR_GIT_BRANCH='Active branch is _experiments. This branch should only be 
 GRP_WARN = 'Warning'
 GRP_ERR = 'Error'
 
-def conduct(func, experiments, name=None, path='experiments', supp_data=None,
+def conduct(func, experiments=None, name=None, path='experiments', supp_data=None,
             analyze=None, runtime_profile=False, memory_profile=False,
             git=False,no_date=False, no_dill=False,parallel=True,module_path=None):
     '''   
@@ -134,6 +134,14 @@ def conduct(func, experiments, name=None, path='experiments', supp_data=None,
             name = func.__class__.__name__
     directory = _get_directory(name, path, no_date)
     module_path=module_path or os.path.dirname(sys.modules[func.__module__].__file__)
+    no_arg_mode=False
+    if not experiments:
+        no_arg_mode=True
+        parallel=False
+        experiments=[None]
+        n_experiments=1
+    else:
+        n_experiments=len(experiments)
     ###########################################################################
     log_file = os.path.join(directory, 'log.txt')
     stderr_file = os.path.join(directory, 'stderr.txt')
@@ -142,7 +150,8 @@ def conduct(func, experiments, name=None, path='experiments', supp_data=None,
     source_file_name = os.path.join(directory, 'source.txt')
     git_file = os.path.join(directory,'git_log.txt')
     ###########################################################################
-    MSG_START = 'Starting experiment series \'{}\' with {} experiments:\n\t{}'.format(name, len(experiments), '\n\t'.join(map(str, experiments)))
+    MSG_START = ('Starting experiment series \'{}\' with {} experiment{}.'.format(name, n_experiments,'s' if n_experiments!=1 else '')
+                +  ('Arguments: \n\t{}'.format('\n\t'.join(map(str, experiments))) if not no_arg_mode else ''))
     MSG_INFO = 'This log and all outputs can be found in {}'.format(directory)
     MSG_TYPE = (('# Experiment series was conducted with instance of class {}'.format(func.__class__.__name__)
                if hasattr(func, '__class__') else 
@@ -159,15 +168,15 @@ def conduct(func, experiments, name=None, path='experiments', supp_data=None,
     info['time'] = datetime.datetime.fromtimestamp(time.time())
     if supp_data:
         info['supp_data'] = supp_data
-    info['runtime'] = [None] * len(experiments)
+    info['runtime'] = [None] * n_experiments
     if memory_profile:
         try:
             import memory_profiler  # @UnusedImport
-            info['memory']=[None]*len(experiments)
+            info['memory']=[None]*n_experiments
         except ImportError:
             log.log(group=GRP_WARN, message=MSG_MEMPROF)
             memory_profile = False
-    info['status'] = ['queued'] * len(experiments)
+    info['status'] = ['queued'] * n_experiments
     try: 
         source = MSG_TYPE.format(''.join(inspect.getsourcelines(sys.modules[func.__module__])[0]))
     except TypeError:
@@ -217,10 +226,10 @@ def conduct(func, experiments, name=None, path='experiments', supp_data=None,
     lock=Lock()
     analyze_lock=Lock()
     args=((i,experiment,directory,func,analyze,memory_profile,
-     runtime_profile,results_file,log_file,'pickle' if serializer==pickle else 'dill') 
+     runtime_profile,results_file,log_file,'pickle' if serializer==pickle else 'dill',no_arg_mode) 
           for i,experiment in enumerate(experiments))
     if parallel:
-        pool=Pool(processes=len(experiments),initializer=_init, initargs=(lock,analyze_lock))
+        pool=Pool(processes=n_experiments,initializer=_init, initargs=(lock,analyze_lock))
         try:
             outputs=pool.map(_run_single_experiment, args)
         except cPickle.PicklingError:
@@ -245,7 +254,7 @@ def _init(l,al):
     
 def _run_single_experiment(arg):
     (i,experiment,directory,func,analyze,memory_profile,
-     runtime_profile,results_file,log_file,serializer)=arg
+     runtime_profile,results_file,log_file,serializer,no_arg_mode)=arg
     ###########################################################################
     stderr_file = os.path.join(directory, 'stderr.txt')
     stderr_files = lambda i: os.path.join(directory, 'experiment{}'.format(i), 'stderr.txt')
@@ -257,7 +266,8 @@ def _run_single_experiment(arg):
     MSG_EXCEPTION_ANALYSIS='Exception during online analysis. Check {}'.format(stderr_file)
     MSG_FAILED_EXPERIMENT = lambda i:'Experiment {} not completed. Check {}'.format(i, stderr_files(i))
     MSG_EXCEPTION_EXPERIMENT = lambda i: 'Exception during execution of experiment {}. Check {}'.format(i, stderr_file)
-    MSG_START_EXPERIMENT = lambda i: 'Starting experiment {} with argument:\n\t{}'.format(i, str(experiment)) 
+    MSG_START_EXPERIMENT = lambda i: ('Starting experiment {}.'+ 
+                                      (' Argument:\n\t{}'.format(i, str(experiment)) if not no_arg_mode else '')) 
     ###########################################################################
     log = Log(write_verbosity=True, print_verbosity=True, file_name=log_file,lock=lock)
     if serializer=='pickle':
@@ -293,7 +303,10 @@ def _run_single_experiment(arg):
         with capture_output() as c:
             tic = timeit.default_timer()
             try:
-                output = temp_func(experiment)
+                if no_arg_mode:
+                    output=temp_func()
+                else:
+                    output = temp_func(experiment)
                 status='finished'
             except Exception:
                 status='failed'
@@ -622,7 +635,7 @@ if __name__ == '__main__':
         is used, this must be a list of dictionaries, which are then
         passed to FUNC together with the items in BASE in form of keyword arguments. 
         ''',
-        default='"[]"')
+        default='None')
     parser.add_argument('-b', '--base', type=str, action='store',
         help=
         '''
@@ -738,15 +751,14 @@ if __name__ == '__main__':
             analyze_fn = None
         module_path=os.path.dirname(module.__file__)
     else:
-        fn= lambda _: subprocess.check_call(module_name,shell=True)
+        fn= lambda: subprocess.check_call(module_name,shell=True)
         if args.analyze:
             analzye_fn=lambda _:subprocess.check_call(args.analyze,shell=True)
         else:
             analyze_fn=None
-        experiments=[]
         if args.name == '_':
             raise ValueError('Must specify name')
-        module_name=os.getcwd()
+        module_path=os.getcwd()
     conduct(func=fn, experiments=args.experiments, name=args.name,
             supp_data=' '.join(sys.argv),
             analyze=analyze_fn,
