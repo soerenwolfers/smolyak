@@ -36,18 +36,20 @@ MSG_STORE_RESULT = 'Could not serialize results'
 MSG_STORE_INFO = lambda keys: 'Could not store keys {}.'.format(keys)
 MSG_FINISH_EXPERIMENT = lambda i, runtime: 'Experiment {} finished. Runtime: {}'.format(i, runtime)
 MSG_RUNTIME_SIMPLE = lambda runtime: 'Runtime: ' + str(runtime) + 's. For more detailed information use \'runtime_profile=True\''
-MSG_FINISHED = 'Done'
+MSG_FINISHED = 'Experiment series completed.'
 MSG_NO_MATCH = 'Could not find matching experiment series'
 MSG_MULTI_MATCH = lambda series:'Multiple matching experiment series (to iterate through all use need_unique=False):\n{}'.format('\n'.join(series))
 MSG_UNUSED = 'Passed configuration dictionary is unused when running experiment series with function'
 MSG_ERROR_LOAD = lambda name: 'Error loading {}'.format(name)
-MSG_ANALYSIS = 'Performing analysis'
+MSG_ANALYSIS_START = 'Updating analysis ...'
+MSG_ANALYSIS_DONE='...done.'
+MSG_ERROR_GIT_BRANCH='Active branch is _experiments. This branch should only be used for archiving snapshots of other branches, not be archived itself'
 GRP_WARN = 'Warning'
 GRP_ERR = 'Error'
 
 def conduct(func, experiments, name=None, path='experiments', supp_data=None,
             analyze=None, runtime_profile=False, memory_profile=False,
-            git=False,no_date=False, no_dill=False,parallel=True,module_directory=None):
+            git=False,no_date=False, no_dill=False,parallel=True,module_name=None):
     '''   
     Call :code:`func` once for each entry of :code:`experiments` and store
     results along with auxiliary information such as runtime and memory usage.
@@ -127,6 +129,7 @@ def conduct(func, experiments, name=None, path='experiments', supp_data=None,
         except AttributeError:
             name = func.__class__.__name__
     directory = _get_directory(name, path, no_date)
+    module_name=module_name or func.__module__
     ###########################################################################
     log_file = os.path.join(directory, 'log.txt')
     stderr_file = os.path.join(directory, 'stderr.txt')
@@ -161,14 +164,14 @@ def conduct(func, experiments, name=None, path='experiments', supp_data=None,
             memory_profile = False
     info['status'] = ['queued'] * len(experiments)
     try: 
-        source = MSG_TYPE + ''.join(inspect.getsourcelines(sys.modules[func.__module__])[0])
+        source = MSG_TYPE + ''.join(inspect.getsourcelines(sys.modules[module_name])[0])
     except TypeError:
         _store_data(stderr_file, traceback.format_exc())
         log.log(group=GRP_WARN, message=MSG_SOURCE)
     if git:
         try:
             with capture_output() as c:
-                _git_snapshot(func, name,module_directory)
+                _git_snapshot(func, name,module_name)
             log.log(message='Created git snapshot in branch _experiments')
         except Exception:
             _store_data(stderr_file, c.stderr+traceback.format_exc())
@@ -322,10 +325,11 @@ def _run_single_experiment(arg):
     del output
     gc.collect()
     if analyze:
-        log.log(message=MSG_ANALYSIS)
+        log.log(message=MSG_ANALYSIS_START)
         analyze_lock.acquire()
         try:
             globals()['analyze'](func=analyze,path=directory,log=log)
+            log.log(message=MSG_ANALYSIS_DONE)
         except:
             _store_data(stderr_file, traceback.format_exc())
             log.log(group=GRP_ERR, message=MSG_EXCEPTION_ANALYSIS)
@@ -500,14 +504,17 @@ def _get_directory(name, path, no_date):
             raise
     return directory
 
-def _git_snapshot(func,name,module_directory):
+def _git_snapshot(func,name,module_name):
     initial_directory=os.getcwd()
-    module_directory=module_directory or os.path.dirname(sys.modules[func.__module__].__file__)
+    module_name = module_name or func.__module__
+    module_directory=os.path.dirname(sys.modules[module_name].__file__)
     os.chdir(module_directory)
     git_directory=subprocess.check_output('git rev-parse --show-toplevel',shell=True,stderr=subprocess.STDOUT).rstrip()
     os.chdir(git_directory)
     regexp=re.compile('On branch (.*)')
     active_branch=regexp.search(subprocess.check_output('git status',shell=True,stderr=subprocess.STDOUT)).group(1)
+    if active_branch=='_experiments':
+        raise ValueError(MSG_ERROR_GIT_BRANCH)
     #subprocess.check_output('git stash -u',shell=True,stderr=subprocess.STDOUT)
     #subprocess.check_output('git checkout _experiments',shell=True,stderr=subprocess.STDOUT)
     #subprocess.check_output('git stash apply',shell=True,stderr=subprocess.STDOUT)
@@ -697,8 +704,8 @@ if __name__ == '__main__':
     else:
         def fn(experiment):
             if init_dict:
-                experiment.update(init_dict)
-            return cl_or_fn(**experiment)
+                init_dict.update(experiment)
+            return cl_or_fn(**init_dict)
     if args.analyze:
         try:
             split_analyze = args.analyze.split('.')
@@ -725,4 +732,4 @@ if __name__ == '__main__':
             no_date=args.no_date,
             no_dill=args.no_dill,
             parallel=args.parallel,
-            module_directory=os.path.dirname(module.__file__))
+            module_name=module.__name__)
