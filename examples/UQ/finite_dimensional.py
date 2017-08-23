@@ -54,7 +54,7 @@ if __name__ == '__main__':
     tests=[
         {'step':7} for l in range(9)
     ]
-    path=experiments.conduct(name='rsa_kink_d{}'.format(opts['c_dim_par']), tests=tests, func=rsa.run_test, overwrite=True,user_data=opts)
+    path=experiments.conduct(name='rsa_kink_d{}'.format(opts['c_dim_par']), tests=tests, func=rsa.run_test, overwrite=True,supp_data=opts)
     info,results=experiments.load(path=path)
     os.chdir(path)
     rsa.analyze(results,info)

@@ -96,4 +96,4 @@ if __name__ == '__main__':
     cProfile.run('kl_adaptive()', 'restats')
     import pstats
     p = pstats.Stats('restats') 
-    p.sort_stats('cumulative').print_runtime(20)
+    p.sort_stats('cumulative').print_stats(20)

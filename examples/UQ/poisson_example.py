@@ -14,7 +14,7 @@ from smolyak.indices import \
     pyramid, rectangle
 from smolyak.applications.polynomials.polynomial_spaces import TensorPolynomialSpace,\
     UnivariatePolynomialSpace
-from smolyak.decomposition import Decomposition
+from smolyak.approximator import Decomposition
 
 def adaptive_multilevel(pardim):
     def PDE(X, mi):
@@ -214,4 +214,4 @@ if __name__ == '__main__':
     cProfile.run('nonadaptive_multilevel(3)', 'restats')
     import pstats
     p = pstats.Stats('restats') 
-    p.sort_stats('cumulative').print_runtime(20)
+    p.sort_stats('cumulative').print_stats(20)

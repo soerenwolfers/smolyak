@@ -46,7 +46,7 @@ class TestPoisson(unittest.TestCase):
          'poisson_kink(np.array([[1,2],[2,3],[4,3],[3,2],[3,2],[3,2]]).reshape(-1,2), 64)', 'restats')
         import pstats
         p = pstats.Stats('restats') 
-        p.sort_stats('cumulative').print_runtime(20)
+        p.sort_stats('cumulative').print_stats(20)
                
 if __name__ == "__main__":
     # import sys;sys.argv = ['', 'Test.testName']

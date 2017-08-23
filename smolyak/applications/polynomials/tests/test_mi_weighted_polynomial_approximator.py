@@ -8,7 +8,7 @@ from smolyak.applications.polynomials.mi_weighted_polynomial_approximator import
 from smolyak.aux.time import snooze
 import cProfile
 import pstats
-from smolyak.decomposition import Decomposition
+from smolyak.approximator import Decomposition
 
 class TestMIWeightedPolynomialApproximator(unittest.TestCase):
 
@@ -22,7 +22,7 @@ class TestMIWeightedPolynomialApproximator(unittest.TestCase):
         """finish any test"""
         p = pstats.Stats(self.pr)
         p.strip_dirs()
-        p.sort_stats('cumulative').print_runtime(20)
+        p.sort_stats('cumulative').print_stats(20)
         print "\n--->>>"
 
     def foo(self, approximation_type):
