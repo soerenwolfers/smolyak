@@ -47,6 +47,7 @@ MSG_UNUSED = 'Passed configuration dictionary is unused when running experiment 
 MSG_ERROR_LOAD = lambda name: 'Error loading {}'.format(name)
 MSG_ANALYSIS_START = 'Updating analysis ...'
 MSG_ANALYSIS_DONE='...done.'
+MSG_ERR_PARALLEL='Error during parallel execution. Try running with parallel=False'
 MSG_ERROR_GIT_BRANCH='Active branch is _experiments. This branch should only be used for archiving snapshots of other branches, not be archived itself'
 GRP_WARN = 'Warning'
 GRP_ERR = 'Error'
@@ -141,6 +142,7 @@ def conduct(func, experiments=None, name=None, path='experiments', supp_data=Non
         experiments=[None]
         n_experiments=1
     else:
+        experiments=list(experiments)
         n_experiments=len(experiments)
     ###########################################################################
     log_file = os.path.join(directory, 'log.txt')
@@ -151,13 +153,15 @@ def conduct(func, experiments=None, name=None, path='experiments', supp_data=Non
     git_file = os.path.join(directory,'git_log.txt')
     ###########################################################################
     MSG_START = ('Starting experiment series \'{}\' with {} experiment{}.'.format(name, n_experiments,'s' if n_experiments!=1 else '')
-                +  ('Arguments: \n\t{}'.format('\n\t'.join(map(str, experiments))) if not no_arg_mode else ''))
+                +  (' Arguments: \n\t{}'.format('\n\t'.join(map(str, experiments))) if not no_arg_mode else ''))
     MSG_INFO = 'This log and all outputs can be found in {}'.format(directory)
     MSG_TYPE = (('# Experiment series was conducted with instance of class {}'.format(func.__class__.__name__)
                if hasattr(func, '__class__') else 
                '# Experiment series was conducted with function {}'.format(func.__name__))
               + ' in the following module: \n {}')
     MSG_ERROR_GIT = 'Error while creating git snapshot Check {}'.format(stderr_file)
+    MSG_GIT_DONE='Created git commit {} in branch _experiments as snapshot of current state of git repository. Check {}'
+    MSG_GIT_LOG='Created git commit {} in branch _experiments as snapshot of current state of git repository using the following commands:\n {}'
     MSG_SOURCE = 'Could not find source code. Check {}'.format(stderr_file)
     ###########################################################################
     log = Log(write_verbosity=True, print_verbosity=True, file_name=log_file)
@@ -185,12 +189,13 @@ def conduct(func, experiments=None, name=None, path='experiments', supp_data=Non
     if git:
         try:
             with capture_output() as c:
-                snapshot_id=_git_snapshot(func, name,module_path)
-            log.log(message='Created git commit {} in branch _experiments as snapshot of current git repository'.format(snapshot_id))
-        except Exception:
+                snapshot_id,git_log=_git_snapshot(func, name,module_path)
+            _store_data(git_file,MSG_GIT_LOG.format(snapshot_id,git_log))
+            log.log(message=MSG_GIT_DONE.format(snapshot_id,git_file))
+        except GitError as e:
             _store_data(stderr_file, c.stderr+traceback.format_exc())
-            log.log(group=GRP_ERR,message=MSG_ERROR_GIT)
-            raise
+            _store_data(git_file,e.git_log)
+            log.log(group=GRP_WARN,message=MSG_ERROR_GIT)
     info_list = [info, {'experiments':experiments}]
     if not no_dill:
         try: 
@@ -233,7 +238,7 @@ def conduct(func, experiments=None, name=None, path='experiments', supp_data=Non
         try:
             outputs=pool.map(_run_single_experiment, args)
         except cPickle.PicklingError:
-            log.log(group=GRP_ERR,message='Error during parallel execution. Try running with parallel=False')
+            log.log(group=GRP_ERR,message=MSG_ERR_PARALLEL)
             raise
         for output in outputs:
             _update_info(*output)
@@ -266,8 +271,8 @@ def _run_single_experiment(arg):
     MSG_EXCEPTION_ANALYSIS='Exception during online analysis. Check {}'.format(stderr_file)
     MSG_FAILED_EXPERIMENT = lambda i:'Experiment {} not completed. Check {}'.format(i, stderr_files(i))
     MSG_EXCEPTION_EXPERIMENT = lambda i: 'Exception during execution of experiment {}. Check {}'.format(i, stderr_file)
-    MSG_START_EXPERIMENT = lambda i: ('Starting experiment {}.'+ 
-                                      (' Argument:\n\t{}'.format(i, str(experiment)) if not no_arg_mode else '')) 
+    MSG_START_EXPERIMENT = lambda i: ('Starting experiment {}.'.format(i)+ 
+                                      (' Argument:\n\t{}'.format(str(experiment)) if not no_arg_mode else '')) 
     ###########################################################################
     log = Log(write_verbosity=True, print_verbosity=True, file_name=log_file,lock=lock)
     if serializer=='pickle':
@@ -311,7 +316,7 @@ def _run_single_experiment(arg):
             except Exception:
                 status='failed'
                 stderr_append=traceback.format_exc()
-            runtime = timeit.default_timer() - tic
+        runtime = timeit.default_timer() - tic
         if stderr_append:
             log.log(group=GRP_ERR, message=MSG_FAILED_EXPERIMENT(i))
         _store_data(stderr_files(i), c.stderr+stderr_append)
@@ -630,10 +635,6 @@ if __name__ == '__main__':
         List of experiment configurations.
         
         e.g.: [2**l for l in range(10)]
-        
-        Warning: If argument FUNC is a function, and if argument BASE
-        is used, this must be a list of dictionaries, which are then
-        passed to FUNC together with the items in BASE in form of keyword arguments. 
         ''',
         default='None')
     parser.add_argument('-b', '--base', type=str, action='store',
@@ -645,7 +646,7 @@ if __name__ == '__main__':
         along each experiment in form of keyword arguments to FUNC.
         
         If argument FUNC specifies a class, the class is instantiated using 
-        this argument.
+        this dictionary in form of keyword arguments.
         ''',
         default='{}')
     parser.add_argument('-n', '--name', type=str, action='store',
@@ -673,6 +674,12 @@ if __name__ == '__main__':
         
         2) a name of a method of the class specified by FUNC
         ''')
+    parser.add_argument('-o','--output',action='store',
+        help=
+        '''
+        Specify output directory
+        ''',
+        default='experiments')
     parser.add_argument('-p','--parallel',action='store_true',
         help=
         '''
@@ -729,9 +736,7 @@ if __name__ == '__main__':
             fn = cl_or_fn(**init_dict)
         else:
             def fn(experiment):
-                if init_dict:
-                    init_dict.update(experiment)
-                return cl_or_fn(**init_dict)
+                return cl_or_fn(experiment,**init_dict)
         if args.analyze:
             try:
                 split_analyze = args.analyze.split('.')
@@ -751,16 +756,19 @@ if __name__ == '__main__':
             analyze_fn = None
         module_path=os.path.dirname(module.__file__)
     else:
-        fn= lambda: subprocess.check_call(module_name,shell=True)
+        def fn(experiment):
+            out=subprocess.check_output(module_name.format(experiment,**init_dict),shell=True,stderr=subprocess.STDOUT)
+            sys.stdout.write(out)
         if args.analyze:
-            analzye_fn=lambda _:subprocess.check_call(args.analyze,shell=True)
-        else:
-            analyze_fn=None
+            raise ValueError('Cannot analyze output in bash mode')
+        analyze_fn=None
         if args.name == '_':
             raise ValueError('Must specify name')
         module_path=os.getcwd()
-    conduct(func=fn, experiments=args.experiments, name=args.name,
-            supp_data=' '.join(sys.argv),
+    conduct(func=fn, path=args.output,
+            experiments=args.experiments, 
+            name=args.name,
+            supp_data='Command line arguments to python call: '+'"'+'" "'.join(sys.argv)+'"',
             analyze=analyze_fn,
             runtime_profile=args.runtime_profile,
             memory_profile=args.memory_profile,
