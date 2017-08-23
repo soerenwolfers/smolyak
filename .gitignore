@@ -1,4 +1,7 @@
 *-blx.bib
+smolyak/experiments
+restats
+development
 docs/_build
 *.rst~
 *.py~
@@ -14,15 +17,13 @@ dist/
 *.lox
 *.upa
 *.upb
-/Archive
 *.xoj
 *.lox
 *.bib.bak
 *.swp
-/Python/.settings
-/Python/build
-/Python/sat.whl
-/Python/Sparse_Approximation_Toolbox.egg-info
+.settings
+build
+sat.whl
 *.synctex.gz
 *.log
 *.pdf
@@ -46,5 +47,4 @@ dist/
 *.blg
 *.out
 *.run.xml
-/Python/examples/restats
 *.DS_Store

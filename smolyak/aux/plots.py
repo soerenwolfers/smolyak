@@ -170,7 +170,7 @@ def plot_convergence(times, values, expect_limit=None, convergence_type='algebra
     if expect_limit is None:
         plotlength = len(times) - ignore
         if plotlength < 2:
-            raise KeyError('Too few values')
+            raise ValueError('Too few data points')
         limit = values[-1]
         times = times[0:-ignore]
     else:
@@ -188,7 +188,7 @@ def plot_convergence(times, values, expect_limit=None, convergence_type='algebra
             residuals[L] = np.power(np.sum(np.power(np.abs(values[L] - limit), p) / N), 1. / p)  #
         else:
             residuals[L] = np.amax(np.abs(values[L] - limit))
-    if convergence_type=='algebriaic':
+    if convergence_type=='algebraic':
         plt.loglog(times, residuals)
     else:
         plt.semilogy(times,residuals)
