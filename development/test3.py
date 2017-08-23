@@ -24,11 +24,9 @@ import importlib
 import random
 import string
 import re
-from multiprocessing import Lock, Pool
-import cPickle
-import subprocess
+from multiprocessing import Process, Lock, Pool
 MSG_MEMPROF = 'Could not store memory profiler. Install memory_profiler via pip install memory_profiler.'
-
+MSG_SOURCE = 'Could not find source code'
 MSG_SERIALIZER = ('Could not find dill. Some items might not be storable. '
     + ('Storage of numpy arrays will be slow' if sys.version[0] < 3 else '')
     + 'Install dill via pip install dill.')
@@ -41,13 +39,12 @@ MSG_NO_MATCH = 'Could not find matching experiment series'
 MSG_MULTI_MATCH = lambda series:'Multiple matching experiment series (to iterate through all use need_unique=False):\n{}'.format('\n'.join(series))
 MSG_UNUSED = 'Passed configuration dictionary is unused when running experiment series with function'
 MSG_ERROR_LOAD = lambda name: 'Error loading {}'.format(name)
-MSG_ANALYSIS = 'Performing analysis'
 GRP_WARN = 'Warning'
 GRP_ERR = 'Error'
 
 def conduct(func, experiments, name=None, path='experiments', supp_data=None,
             analyze=None, runtime_profile=False, memory_profile=False,
-            git=False,no_date=False, no_dill=False,parallel=True,module_directory=None):
+            no_date=False, no_dill=False):
     '''   
     Call :code:`func` once for each entry of :code:`experiments` and store
     results along with auxiliary information such as runtime and memory usage.
@@ -66,6 +63,7 @@ def conduct(func, experiments, name=None, path='experiments', supp_data=None,
         *info.pkl:
             *name: Name of experiment series (str)
             *time: Time of execution (datetime.datetime)
+            *func: Parameter :code:`func`
             *experiments: Parameter :code:`experiments`
             *runtime: Runtime of each experiment (list of floats)
             *status: Status of each experiment (list of ('queued'/'finished'/'failed'))
@@ -108,8 +106,6 @@ def conduct(func, experiments, name=None, path='experiments', supp_data=None,
     :type runtime_profile: Boolean.
     :param memory_profile: Track memory usage. This can slow down the execution.
     type memory_profile: Boolean
-    :param git: Create git snapshot in branch _experiments
-    :type git: Boolean.
     :param no_date: Do not store outputs in sub-directories grouped by calendar week.
     :type date: Boolean.
     :param no_dill: Do not use dill module. Explanation: Using pickle to store 
@@ -117,9 +113,6 @@ def conduct(func, experiments, name=None, path='experiments', supp_data=None,
         Lambda functions, or not-module level functions. As an alternative, this
         function uses dill (if available) unless this parameter is set to True.
     :type no_dill: Boolean.
-    :param module_directory: Specify location of module of func. This is used for 
-    the creation of a git snapshot. If not specified, try to determine module au-
-    tomatically
     '''
     if not name:
         try: 
@@ -129,10 +122,16 @@ def conduct(func, experiments, name=None, path='experiments', supp_data=None,
     directory = _get_directory(name, path, no_date)
     ###########################################################################
     log_file = os.path.join(directory, 'log.txt')
-    stderr_file = os.path.join(directory, 'stderr.txt')
     results_file = os.path.join(directory, 'results.pkl')
     info_file = os.path.join(directory, 'info.pkl')
     source_file_name = os.path.join(directory, 'source.txt')
+    stderr_file = os.path.join(directory, 'stderr.txt')
+    stderr_files = lambda i: os.path.join(directory, 'experiment{}'.format(i), 'stderr.txt')
+    stdout_files = lambda i: os.path.join(directory, 'experiment{}'.format(i), 'stdout.txt')
+    input_files = lambda i: os.path.join(directory, 'experiment{}'.format(i), 'input.txt')
+    runtime_profile_files = lambda i:os.path.join(directory, 'experiment{}'.format(i), 'runtime_profile.txt')
+    memory_profile_files = lambda i:os.path.join(directory, 'experiment{}'.format(i), 'memory_profile.txt')
+    experiment_user_directories = lambda i: os.path.join(directory, 'experiment{}'.format(i), 'user_files')
     ###########################################################################
     MSG_START = 'Starting experiment series \'{}\' with {} experiments:\n\t{}'.format(name, len(experiments), '\n\t'.join(map(str, experiments)))
     MSG_INFO = 'This log and all outputs can be found in {}'.format(directory)
@@ -140,8 +139,10 @@ def conduct(func, experiments, name=None, path='experiments', supp_data=None,
                if hasattr(func, '__class__') else 
                '# Experiment series was conducted with function {}'.format(func.__name__))
               + ' in the following module: \n')
-    MSG_GIT = 'Error while creating git snapshot Check {}'.format(stderr_file)
-    MSG_SOURCE = 'Could not find source code. Check {}'.format(stderr_file)
+    MSG_EXCEPTION_ANALYSIS='Exception during online analysis. Check {}'.format(stderr_file)
+    MSG_FAILED_EXPERIMENT = lambda i:'Experiment {} not completed. Check {}'.format(i, stderr_files(i))
+    MSG_EXCEPTION_EXPERIMENT = lambda i: 'Exception during execution of experiment {}. Check {}'.format(i, stderr_file)
+    MSG_START_EXPERIMENT = lambda i: 'Starting experiment {} with argument:\n\t{}'.format(i, str(experiments[i])) 
     ###########################################################################
     log = Log(write_verbosity=True, print_verbosity=True, file_name=log_file)
     log.log(MSG_START)
@@ -154,7 +155,7 @@ def conduct(func, experiments, name=None, path='experiments', supp_data=None,
     info['runtime'] = [None] * len(experiments)
     if memory_profile:
         try:
-            import memory_profiler  # @UnusedImport
+            import memory_profiler
             info['memory']=[None]*len(experiments)
         except ImportError:
             log.log(group=GRP_WARN, message=MSG_MEMPROF)
@@ -163,16 +164,7 @@ def conduct(func, experiments, name=None, path='experiments', supp_data=None,
     try: 
         source = MSG_TYPE + ''.join(inspect.getsourcelines(sys.modules[func.__module__])[0])
     except TypeError:
-        _store_data(stderr_file, traceback.format_exc())
         log.log(group=GRP_WARN, message=MSG_SOURCE)
-    if git:
-        try:
-            with capture_output() as c:
-                _git_snapshot(func, name,module_directory)
-            log.log(message='Created git snapshot in branch _experiments')
-        except Exception:
-            _store_data(stderr_file, c.stderr+traceback.format_exc())
-            log.log(group=GRP_WARN,message=MSG_GIT)
     info_list = [info, {'experiments':experiments}]
     if not no_dill:
         try: 
@@ -190,156 +182,90 @@ def conduct(func, experiments, name=None, path='experiments', supp_data=None,
                     serializer.dump(temp, fp)
                 except (TypeError, pickle.PicklingError):
                     log.log(group=GRP_WARN, message=MSG_STORE_INFO(temp.keys()))
-    def _update_info(i,runtime,status,memory):
-        info['runtime'][i]=runtime
-        if memory_profile:
-            info['memory'][i]=memory
-        info['status'][i]=status     
-        store_info()
     def store_result(result):
         with open(results_file, 'ab') as fp:
             try:
                 serializer.dump([result], fp)
             except (TypeError, pickle.PicklingError):
                 log.log(group=GRP_WARN, message=MSG_STORE_RESULT)
+    def _store_data(file_name, data):
+        if data:
+            with open(file_name, 'a') as fp:
+                fp.write(data)
     store_info()
     _store_data(source_file_name,source)
     old_wd = os.getcwd()
-    lock=Lock()
-    analyze_lock=Lock()
-    args=((i,experiment,directory,func,analyze,memory_profile,
-     runtime_profile,results_file,log_file,'pickle' if serializer==pickle else 'dill') 
-          for i,experiment in enumerate(experiments))
-    if parallel:
-        pool=Pool(processes=len(experiments),initializer=_init, initargs=(lock,analyze_lock))
+    for i, experiment in enumerate(experiments):
+        log.log(MSG_START_EXPERIMENT(i)) 
+        runtime=None
+        output = None
+        if  hasattr(func, '__name__'):
+            temp_func = func
+        else:
+            temp_func = func.__call__
+        experiment_directory = experiment_user_directories(i)
+        os.makedirs(experiment_directory)
+        os.chdir(experiment_directory)
         try:
-            outputs=pool.map(_run_single_experiment, args)
-        except cPickle.PicklingError:
-            log.log(group=GRP_ERR,message='Error during parallel execution. Try running with parallel=False')
-            raise
-        for output in outputs:
-            _update_info(*output)
-    else:
-        _init(lock,analyze_lock)
-        for arg in args:
-            output=_run_single_experiment(arg)
-            _update_info(*output)
+            if memory_profile:
+                m = StringIO()
+                temp_func = memory_profiler.profile(func=temp_func, stream=m, precision=4)
+            if runtime_profile:
+                temp_func = add_runtime(temp_func)
+            stderr_append=""
+            with capture_output() as c:
+                tic = timeit.default_timer()
+                try:
+                    output = temp_func(experiment)
+                    info['status'][i] = 'finished'
+                    #status='finished'
+                except Exception:
+                    info['status'][i] = 'failed'
+                    #status='failed'
+                    stderr_append=traceback.format_exc()
+                runtime = timeit.default_timer() - tic
+            if stderr_append:
+                log.log(group=GRP_ERR, message=MSG_FAILED_EXPERIMENT(i))
+            _store_data(stderr_files(i), c.stderr+(stderr_append))
+            _store_data(stdout_files(i), c.stdout)
+            _store_data(input_files(i), str(experiment))
+            info['runtime'][i] = runtime
+            if runtime_profile: 
+                profile, output = output
+                s = BytesIO()
+                ps = pstats.Stats(profile, stream=s)
+                ps.sort_stats('cumulative')
+                ps.print_stats()
+                _store_data(runtime_profile_files(i), s.getvalue())
+                s.close()
+            else:
+                _store_data(runtime_profile_files(i), MSG_RUNTIME_SIMPLE(runtime))
+            if memory_profile:
+                _store_data(memory_profile_files(i), m.getvalue())
+                info['memory'][i]=_max_mem(m.getvalue())
+                #memory=_max_mem(m.getvalue())
+        except Exception:
+            _store_data(stderr_file, traceback.format_exc())
+            log.log(group=GRP_ERR, message=MSG_EXCEPTION_EXPERIMENT(i))
+        if info['status'][i] == 'finished':
+        #if status=='finished':
+            log.log(MSG_FINISH_EXPERIMENT(i, runtime))   
+        os.chdir(directory)
+        store_result(output)
+        del output
+        gc.collect()
+        store_info()
+        if analyze:
+            try:
+                globals()['analyze'](func=analyze,path=directory,log=log)
+            except:
+                _store_data(stderr_file, traceback.format_exc())
+                log.log(group=GRP_ERR, message=MSG_EXCEPTION_ANALYSIS)
     os.chdir(old_wd)
     log.log(MSG_FINISHED)
     return directory
-
-def _init(l,al):
-    global lock
-    global analyze_lock
-    lock = l
-    analyze_lock=al
     
-def _run_single_experiment(arg):
-    (i,experiment,directory,func,analyze,memory_profile,
-     runtime_profile,results_file,log_file,serializer)=arg
-    ###########################################################################
-    stderr_file = os.path.join(directory, 'stderr.txt')
-    stderr_files = lambda i: os.path.join(directory, 'experiment{}'.format(i), 'stderr.txt')
-    stdout_files = lambda i: os.path.join(directory, 'experiment{}'.format(i), 'stdout.txt')
-    input_files = lambda i: os.path.join(directory, 'experiment{}'.format(i), 'input.txt')
-    runtime_profile_files = lambda i:os.path.join(directory, 'experiment{}'.format(i), 'runtime_profile.txt')
-    memory_profile_files = lambda i:os.path.join(directory, 'experiment{}'.format(i), 'memory_profile.txt')
-    experiment_user_directories = lambda i: os.path.join(directory, 'experiment{}'.format(i), 'user_files')
-    MSG_EXCEPTION_ANALYSIS='Exception during online analysis. Check {}'.format(stderr_file)
-    MSG_FAILED_EXPERIMENT = lambda i:'Experiment {} not completed. Check {}'.format(i, stderr_files(i))
-    MSG_EXCEPTION_EXPERIMENT = lambda i: 'Exception during execution of experiment {}. Check {}'.format(i, stderr_file)
-    MSG_START_EXPERIMENT = lambda i: 'Starting experiment {} with argument:\n\t{}'.format(i, str(experiment)) 
-    ###########################################################################
-    log = Log(write_verbosity=True, print_verbosity=True, file_name=log_file,lock=lock)
-    if serializer=='pickle':
-        serializer=pickle
-    else:
-        import dill
-        serializer=dill
-    def store_result(result):
-        with open(results_file, 'ab') as fp:
-            try:
-                serializer.dump([result], fp)
-            except (TypeError, pickle.PicklingError):
-                log.log(group=GRP_WARN, message=MSG_STORE_RESULT)
-    log.log(MSG_START_EXPERIMENT(i)) 
-    runtime = None
-    output = None
-    memory = None
-    if  hasattr(func, '__name__'):
-        temp_func = func
-    else:
-        temp_func = func.__call__
-    experiment_directory = experiment_user_directories(i)
-    os.makedirs(experiment_directory)
-    os.chdir(experiment_directory)
-    try:
-        if memory_profile:
-            import memory_profiler
-            m = StringIO()
-            temp_func = memory_profiler.profile(func=temp_func, stream=m, precision=4)
-        if runtime_profile:
-            temp_func = add_runtime(temp_func)
-        stderr_append=""
-        with capture_output() as c:
-            tic = timeit.default_timer()
-            try:
-                output = temp_func(experiment)
-                status='finished'
-            except Exception:
-                status='failed'
-                stderr_append=traceback.format_exc()
-            runtime = timeit.default_timer() - tic
-        if stderr_append:
-            log.log(group=GRP_ERR, message=MSG_FAILED_EXPERIMENT(i))
-        _store_data(stderr_files(i), c.stderr+stderr_append)
-        _store_data(stdout_files(i), c.stdout)
-        _store_data(input_files(i), str(experiment))
-        if runtime_profile: 
-            profile, output = output
-            s = BytesIO()
-            ps = pstats.Stats(profile, stream=s)
-            ps.sort_stats('cumulative')
-            ps.print_stats()
-            _store_data(runtime_profile_files(i), s.getvalue())
-            s.close()
-        else:
-            _store_data(runtime_profile_files(i), MSG_RUNTIME_SIMPLE(runtime))
-        if memory_profile:
-            _store_data(memory_profile_files(i), m.getvalue())
-            memory=_max_mem(m.getvalue())
-    except Exception:
-        lock.acquire()
-        _store_data(stderr_file, traceback.format_exc())
-        lock.release()
-        log.log(group=GRP_ERR, message=MSG_EXCEPTION_EXPERIMENT(i))
-    if status=='finished':
-        log.log(MSG_FINISH_EXPERIMENT(i, runtime))   
-    os.chdir(directory)
-    lock.acquire()
-    store_result(output)
-    lock.release()
-    del output
-    gc.collect()
-    if analyze:
-        log.log(message=MSG_ANALYSIS)
-        analyze_lock.acquire()
-        try:
-            globals()['analyze'](func=analyze,path=directory,log=log)
-        except:
-            _store_data(stderr_file, traceback.format_exc())
-            log.log(group=GRP_ERR, message=MSG_EXCEPTION_ANALYSIS)
-        analyze_lock.release()
-    return (i,runtime,status,memory)
-
-def _store_data(file_name, data):
-        if data:
-            with open(file_name, 'a') as fp:
-                fp.write(data)  
-                
 def analyze(func,search_pattern='*',path='',need_unique=False,log=None,no_dill=False):
-    if not log:
-        log=Log(print_verbosity=True)
     if not no_dill:
         try: 
             import dill
@@ -351,6 +277,10 @@ def analyze(func,search_pattern='*',path='',need_unique=False,log=None,no_dill=F
         serializer = pickle
     MSG_FAILED_ANALYSIS = lambda stderr_file: 'Analysis could not be completed. Check {}'.format(stderr_file)
     MSG_STORE_ANALYSIS = lambda name: 'Could not serialize results of analysis'
+    def _store_data(file_name, data):
+        if data:
+            with open(file_name, 'w') as fp:
+                fp.write(data)
     for (info,results,directory) in load(search_pattern=search_pattern,path=path,need_unique=need_unique,info_only=False):
         analysis_directory = os.path.join(directory, 'analysis')
         shutil.rmtree(analysis_directory, ignore_errors=True)
@@ -415,30 +345,24 @@ def load(search_pattern='*', path='', info_only=False, need_unique=True):
     except ImportError:
         warnings.warn(MSG_SERIALIZER)
     def assemble_file_contents(file_name, iterable, need_start=False, update=False):
-        try: 
-            with open(file_name, 'r') as fp:
-                output = iterable()
-                for i in itertools.count():
-                    try:
-                        to_add = deserializer.load(fp)
-                    except Exception as e:    
-                        if i == 0 and need_start:
-                            raise
-                        else:
-                            if isinstance(e, EOFError):
-                                break
-                            else:
-                                traceback.format_exc()
-                                warnings.warn(MSG_ERROR_LOAD('file '+file_name))
-                    if update:
-                        output.update(to_add)
+        with open(file_name, 'r') as fp:
+            output = iterable()
+            for i in itertools.count():
+                try:
+                    to_add = deserializer.load(fp)
+                except Exception as e:    
+                    if i == 0 and need_start:
+                        raise
                     else:
-                        output += to_add
-                return output
-        except Exception:
-            traceback.format_exc()
-            warnings.warn(MSG_ERROR_LOAD('file '+file_name))
-            output=None
+                        if isinstance(e, EOFError):
+                            break
+                        else:
+                            warnings.warn(MSG_ERROR_LOAD(file_name))
+                if update:
+                    output.update(to_add)
+                else:
+                    output += to_add
+            return output
     series = []
     series.extend(files.find_directories(search_pattern, path=path))
     series.extend(files.find_directories('*/' + search_pattern, path=path))
@@ -459,7 +383,7 @@ def load(search_pattern='*', path='', info_only=False, need_unique=True):
         if len(series) == 0:
             raise ValueError(MSG_NO_MATCH)
         if len(series) > 1:
-            raise ValueError(MSG_MULTI_MATCH(series))
+            raise ValueError(MSG_MULTI_MATCH)
         return get_output(series[0])
 
 def _is_experiment_directory(directory):
@@ -500,185 +424,31 @@ def _get_directory(name, path, no_date):
             raise
     return directory
 
-def _git_snapshot(func,name,module_directory):
-    initial_directory=os.getcwd()
-    module_directory=module_directory or os.path.dirname(sys.modules[func.__module__].__file__)
-    os.chdir(module_directory)
-    git_directory=subprocess.check_output('git rev-parse --show-toplevel',shell=True,stderr=subprocess.STDOUT).rstrip()
-    os.chdir(git_directory)
-    regexp=re.compile('On branch (.*)')
-    active_branch=regexp.search(subprocess.check_output('git status',shell=True,stderr=subprocess.STDOUT)).group(1)
-    #subprocess.check_output('git stash -u',shell=True,stderr=subprocess.STDOUT)
-    #subprocess.check_output('git checkout _experiments',shell=True,stderr=subprocess.STDOUT)
-    #subprocess.check_output('git stash apply',shell=True,stderr=subprocess.STDOUT)
-    #subprocess.check_output('git add .',shell=True,stderr=subprocess.STDOUT)
-    #subprocess.check_output('git commit -m "Experiment {}"'.format('Experriment'),shell=True,stderr=subprocess.STDOUT)
-    #subprocess.check_output('git checkout {}'.format(active_branch),shell=True,stderr=subprocess.STDOUT)
-    #subprocess.check_output('git stash pop',shell=True,stderr=subprocess.STDOUT)
-    ###
-    subprocess.check_output('git add .',shell=True,stderr=subprocess.STDOUT)
-    subprocess.check_output('git commit --allow-empty -m "Snapshot on branch {} for experiment {}"'.format(active_branch,'Experiment'),shell=True,stderr=subprocess.STDOUT)
-    try:
-        subprocess.check_output('git checkout -b _experiments',shell=True,stderr=subprocess.STDOUT)
-    except:
-        subprocess.check_output('git checkout _experiments',shell=True,stderr=subprocess.STDOUT)
-    subprocess.check_output('git merge master --no-edit -s recursive -X theirs -m "Automated merge"',shell=True,stderr=subprocess.STDOUT)
-    subprocess.check_output('git checkout {}'.format(active_branch),shell=True,stderr=subprocess.STDOUT)
-    subprocess.check_output('git reset HEAD~1',shell=True,stderr=subprocess.STDOUT)
-    ###
-    os.chdir(initial_directory)
-
 if __name__ == '__main__':
-    import textwrap as _textwrap
-    class LineWrapRawTextHelpFormatter(argparse.RawDescriptionHelpFormatter):
-        def _split_lines(self, text, width):
-            text = self._whitespace_matcher.sub(' ', text).strip()
-            return _textwrap.wrap(text, width)
-    parser = argparse.ArgumentParser(formatter_class=LineWrapRawTextHelpFormatter,
-        description=
-        '''
-        Perform experiment series. Store (and analyze) results and runtime information.
-        
-        Calls given function once for each entry of given list of experiments and 
-        stores results along with auxiliary information such as runtime and memory usage.
-        Each experiments is passed as a whole to the specified function. 
-        (Exception: if a basis_config dictionary is passed, it is joined with each experiment
-        and the union is passed as keyword arguments to the specified function)
-        
-        The following files and directories are created:
-            *info.pkl:
-                *name: Name of experiment series (str)
-                *time: Time of execution (datetime.datetime)
-                *experiments: Input `experiments`
-                *runtime: Runtime of each experiment (list of floats)
-                *status: Status of each experiment (list of ('queued'/'finished'/'failed'))
-                *supp_data: The command-line command that was used to call this function
-            *log.txt
-            *results.pkl: List of results of experiments 
-            *source.txt: Source code of the specified
-            *(optional)stderr.txt
-            *For each experiment a subdirectory "experiment<i>" with:
-                *user_files/ (Working directory for call of specified function)
-                *input.txt: String representation of arguments
-                *stderr.txt
-                *stdout.txt
-                *(optional)runtime_profile.txt: Extensive runtime information for each experiment (list of strings)
-                *(optional)memory_profile.txt: Memory usage information for each experiment (list of strings)
-            *(optional) analysis/: output of function :analysis:
-                *stderr.txt
-                *stdout.txt
-                *user_files/ (Working directory for call of specified analysis function)
-        
-        Both info.pkl and results.pkl are created with pickle, for technical
-        reasons they contain multiple concatenated pickle streams. To load these files,
-        and automatically join the contents of info.pkl into a single dictionary and
-        the contents of results.pkl into a single list, the function :code:`load` may be used.
-        ''')
+    parser = argparse.ArgumentParser(description='Perform experiment series. Store (and analyze) results.')
     parser.register('type', 'bool',
                     lambda v: v.lower() in ("yes", "true", "t", "1", "y"))
-    parser.add_argument("func", type=str, action='store',
-        help=
-        '''
-        Specifies a function that performs the experiments. 
-                            
-        The standard way is to provide the full path of a function
-        e.g.: `foo.func`.
-        
-        There are two alternatives:
-        1) Provide the full name of a module that contains a class of the same name (up to capitalization). 
-        e.g.: `foo.bar`
-        
-        2) Provide the full name of a class.
-        e.g.: `foo.bar.Bar2`
-        
-        In both cases above, the specified class is instantiated
-         and all experiments are performed by calling this instance.
-        ''')
+    parser.add_argument("module", type=str, action='store',
+                        help='Module describing experiment series')
     parser.add_argument('experiments', type=str, action='store',
-        help=
-        '''
-        List of experiment configurations.
-        
-        e.g.: [2**l for l in range(10)]
-        
-        Warning: If argument FUNC is a function, and if argument BASE
-        is used, this must be a list of dictionaries, which are then
-        passed to FUNC together with the items in BASE in form of keyword arguments. 
-        ''')
-    parser.add_argument('-b', '--base', type=str, action='store',
-        help=
-        '''
-        Base configuration (in form of a dictionary) for all experiments. 
-        
-        If argument FUNC is a function, this dictionary is passed
-        along each experiment in form of keyword arguments to FUNC.
-        
-        If argument FUNC specifies a class, the class is instantiated using 
-        this argument.
-        ''',
-        default='{}')
+                        help='List of experiment configuration')
+    parser.add_argument('-c', '--config', type=str, action='store',
+                        help='Arguments for initialization',
+                        default='{}')
     parser.add_argument('-n', '--name', type=str, action='store',
-        default='_',
-        help=
-        '''
-        Name of the experiment series. 
-        
-        If not provided, the name is derived from FUNC
-        ''')
+                        default='_')
     parser.add_argument('-a', '--analyze', type=str, action='store',
-        nargs='?', const='analyze', default=None,
-        help=
-        '''
-        Function that is used to perform analysis after each experiment.
-        
-        The specified function is called with a tuple (results,info)
-        containing the content of the files results.pkl and info.pkl described above, respectively.
-        
-        By default, ANALYZE is the name of a function in the same module as FUNC.
-        
-        Alternatively, ANALYZE can be 
-        1) a full name of a function in some different module,
-        e.g.: foo2.analyze
-        
-        2) a name of a method of the class specified by FUNC
-        ''')
-    parser.add_argument('-p','--parallel',action='store_true',
-        help=
-        '''
-        Perform experiments in parallel.
-        ''')
-    parser.add_argument('-m','--memory_profile', action='store_true',
-        help=
-        '''
-        Store memory information for each experiment
-        ''')
-    parser.add_argument('-r','--runtime_profile', action='store_true',
-        help=
-        '''
-        Store extensive runtime information for each experiment.
-        
-        The total time of each experiment is always stored.
-        ''')
-    parser.add_argument('-g','--git',action='store_true',
-        help=
-        '''
-        Create git snapshot in branch _experiments.
-        ''')
-    parser.add_argument('--no_date', action='store_true',
-        help=
-        '''
-        Do not store experiments in subdirectories based on current date.
-        ''')
-    parser.add_argument('--no_dill', action='store_true',
-        help=
-        '''
-        Do not use dill to store info.pkl and results.pkl. This 
-        is probably a bad idea. 
-        ''')
+                        help='Function that performs analysis on output',
+                        nargs='?', const='analyze',
+                        default=None)
+    parser.add_argument('--memory_profile', action='store_true')
+    parser.add_argument('--runtime_profile', action='store_true')
+    parser.add_argument('--no_date', action='store_true')
+    parser.add_argument('--no_dill', action='store_true')
     args, unknowns = parser.parse_known_args()
     args.experiments = eval(args.experiments)
-    init_dict = eval(args.base)
-    module_name = args.func
+    init_dict = eval(args.config)
+    module_name = args.module
     try:
         module = importlib.import_module(module_name)
     except ImportError:
@@ -695,10 +465,9 @@ if __name__ == '__main__':
     if inspect.isclass(cl_or_fn):
         fn = cl_or_fn(**init_dict)
     else:
-        def fn(experiment):
-            if init_dict:
-                experiment.update(init_dict)
-            return cl_or_fn(**experiment)
+        if init_dict:
+            warnings.warn(MSG_UNUSED)
+        fn = cl_or_fn
     if args.analyze:
         try:
             split_analyze = args.analyze.split('.')
@@ -709,7 +478,7 @@ if __name__ == '__main__':
                     analyze_module = module
                 analyze_fn = getattr(analyze_module, split_analyze[-1])
             except AttributeError:  # is analyze maybe a function of class instance?
-                analyze_fn = getattr(fn, args.analyze)
+                analyze_fn = getattr(fn, split_analyze[:-1])
         except: 
             analyze_fn = None
             traceback.format_exc()
@@ -717,12 +486,9 @@ if __name__ == '__main__':
     else:
         analyze_fn = None
     conduct(func=fn, experiments=args.experiments, name=args.name,
-            supp_data=' '.join(sys.argv),
+            supp_data=sys.argv,
             analyze=analyze_fn,
             runtime_profile=args.runtime_profile,
             memory_profile=args.memory_profile,
-            git=args.git,
             no_date=args.no_date,
-            no_dill=args.no_dill,
-            parallel=args.parallel,
-            module_directory=os.path.dirname(module.__file__))
+            no_dill=args.no_dill)

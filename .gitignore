@@ -1,8 +1,6 @@
 *-blx.bib
 smolyak/experiments
 restats
-development
-development/*
 docs/_build
 *.rst~
 *.py~
