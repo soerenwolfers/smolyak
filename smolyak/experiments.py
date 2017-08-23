@@ -27,6 +27,10 @@ import re
 from multiprocessing import Lock, Pool
 import cPickle
 import subprocess
+class GitError(Exception):
+    def __init__(self, message, git_log):
+        super(GitError, self).__init__(message)
+        self.git_log = git_log
 MSG_MEMPROF = 'Could not store memory profiler. Install memory_profiler via pip install memory_profiler.'
 
 MSG_SERIALIZER = ('Could not find dill. Some items might not be storable. '
@@ -49,7 +53,7 @@ GRP_ERR = 'Error'
 
 def conduct(func, experiments, name=None, path='experiments', supp_data=None,
             analyze=None, runtime_profile=False, memory_profile=False,
-            git=False,no_date=False, no_dill=False,parallel=True,module_name=None):
+            git=False,no_date=False, no_dill=False,parallel=True,module_path=None):
     '''   
     Call :code:`func` once for each entry of :code:`experiments` and store
     results along with auxiliary information such as runtime and memory usage.
@@ -119,9 +123,9 @@ def conduct(func, experiments, name=None, path='experiments', supp_data=None,
         Lambda functions, or not-module level functions. As an alternative, this
         function uses dill (if available) unless this parameter is set to True.
     :type no_dill: Boolean.
-    :param module_directory: Specify location of module of func. This is used for 
-    the creation of a git snapshot. If not specified, try to determine module au-
-    tomatically
+    :param module_path: Specify location of module of func. This is used for 
+    the creation of a git snapshot. If not specified, this is determined automatically
+    :type module_path: String
     '''
     if not name:
         try: 
@@ -129,21 +133,22 @@ def conduct(func, experiments, name=None, path='experiments', supp_data=None,
         except AttributeError:
             name = func.__class__.__name__
     directory = _get_directory(name, path, no_date)
-    module_name=module_name or func.__module__
+    module_path=module_path or os.path.dirname(sys.modules[func.__module__].__file__)
     ###########################################################################
     log_file = os.path.join(directory, 'log.txt')
     stderr_file = os.path.join(directory, 'stderr.txt')
     results_file = os.path.join(directory, 'results.pkl')
     info_file = os.path.join(directory, 'info.pkl')
     source_file_name = os.path.join(directory, 'source.txt')
+    git_file = os.path.join(directory,'git_log.txt')
     ###########################################################################
     MSG_START = 'Starting experiment series \'{}\' with {} experiments:\n\t{}'.format(name, len(experiments), '\n\t'.join(map(str, experiments)))
     MSG_INFO = 'This log and all outputs can be found in {}'.format(directory)
     MSG_TYPE = (('# Experiment series was conducted with instance of class {}'.format(func.__class__.__name__)
                if hasattr(func, '__class__') else 
                '# Experiment series was conducted with function {}'.format(func.__name__))
-              + ' in the following module: \n')
-    MSG_GIT = 'Error while creating git snapshot Check {}'.format(stderr_file)
+              + ' in the following module: \n {}')
+    MSG_ERROR_GIT = 'Error while creating git snapshot Check {}'.format(stderr_file)
     MSG_SOURCE = 'Could not find source code. Check {}'.format(stderr_file)
     ###########################################################################
     log = Log(write_verbosity=True, print_verbosity=True, file_name=log_file)
@@ -164,18 +169,19 @@ def conduct(func, experiments, name=None, path='experiments', supp_data=None,
             memory_profile = False
     info['status'] = ['queued'] * len(experiments)
     try: 
-        source = MSG_TYPE + ''.join(inspect.getsourcelines(sys.modules[module_name])[0])
+        source = MSG_TYPE.format(''.join(inspect.getsourcelines(sys.modules[func.__module__])[0]))
     except TypeError:
         _store_data(stderr_file, traceback.format_exc())
         log.log(group=GRP_WARN, message=MSG_SOURCE)
     if git:
         try:
             with capture_output() as c:
-                _git_snapshot(func, name,module_name)
-            log.log(message='Created git snapshot in branch _experiments')
+                snapshot_id=_git_snapshot(func, name,module_path)
+            log.log(message='Created git commit {} in branch _experiments as snapshot of current git repository'.format(snapshot_id))
         except Exception:
             _store_data(stderr_file, c.stderr+traceback.format_exc())
-            log.log(group=GRP_WARN,message=MSG_GIT)
+            log.log(group=GRP_ERR,message=MSG_ERROR_GIT)
+            raise
     info_list = [info, {'experiments':experiments}]
     if not no_dill:
         try: 
@@ -504,11 +510,10 @@ def _get_directory(name, path, no_date):
             raise
     return directory
 
-def _git_snapshot(func,name,module_name):
+def _git_snapshot(func,name,module_path=None):
     initial_directory=os.getcwd()
-    module_name = module_name or func.__module__
-    module_directory=os.path.dirname(sys.modules[module_name].__file__)
-    os.chdir(module_directory)
+    module_path = module_path or os.path.dirname(sys.modules[func.__module__].__file__)
+    os.chdir(module_path)
     git_directory=subprocess.check_output('git rev-parse --show-toplevel',shell=True,stderr=subprocess.STDOUT).rstrip()
     os.chdir(git_directory)
     regexp=re.compile('On branch (.*)')
@@ -523,17 +528,22 @@ def _git_snapshot(func,name,module_name):
     #subprocess.check_output('git checkout {}'.format(active_branch),shell=True,stderr=subprocess.STDOUT)
     #subprocess.check_output('git stash pop',shell=True,stderr=subprocess.STDOUT)
     ###
-    subprocess.check_output('git add .',shell=True,stderr=subprocess.STDOUT)
-    subprocess.check_output('git commit --allow-empty -m "Snapshot on branch {} for experiment {}"'.format(active_branch,'Experiment'),shell=True,stderr=subprocess.STDOUT)
     try:
-        subprocess.check_output('git checkout -b _experiments',shell=True,stderr=subprocess.STDOUT)
+        out='$ git add . \n '+subprocess.check_output('git add .',shell=True,stderr=subprocess.STDOUT)
+        out+='$ git commit \n'+subprocess.check_output('git commit --allow-empty -m "Snapshot on branch {} for experiment {}"'.format(active_branch,name),shell=True,stderr=subprocess.STDOUT)
+        try:
+            out+='$ git checkout -b _experiments\n'+subprocess.check_output('git checkout -b _experiments',shell=True,stderr=subprocess.STDOUT)
+        except:
+            out+='$ git checkout _experiments\n'+subprocess.check_output('git checkout _experiments',shell=True,stderr=subprocess.STDOUT)
+        out+='$ git merge master\n'+subprocess.check_output('git merge master --no-edit -s recursive -X theirs -m "Merge snapshot from branch {} into branch _experiments"'.format(active_branch),shell=True,stderr=subprocess.STDOUT)
+        id=subprocess.check_output(r'git log --format="%H" -n 1',shell=True,stderr=subprocess.STDOUT).rstrip()  # @ReservedAssignment
+        out+='$ git checkout {}\n'.format(active_branch)+subprocess.check_output('git checkout {}'.format(active_branch),shell=True,stderr=subprocess.STDOUT)
+        out+='$ git reset HEAD~1\n'+subprocess.check_output('git reset HEAD~1',shell=True,stderr=subprocess.STDOUT)
     except:
-        subprocess.check_output('git checkout _experiments',shell=True,stderr=subprocess.STDOUT)
-    subprocess.check_output('git merge master --no-edit -s recursive -X theirs -m "Automated merge"',shell=True,stderr=subprocess.STDOUT)
-    subprocess.check_output('git checkout {}'.format(active_branch),shell=True,stderr=subprocess.STDOUT)
-    subprocess.check_output('git reset HEAD~1',shell=True,stderr=subprocess.STDOUT)
+        raise GitError(traceback.format_exc,out)
     ###
     os.chdir(initial_directory)
+    return id,out
 
 if __name__ == '__main__':
     import textwrap as _textwrap
@@ -601,7 +611,7 @@ if __name__ == '__main__':
         In both cases above, the specified class is instantiated
          and all experiments are performed by calling this instance.
         ''')
-    parser.add_argument('experiments', type=str, action='store',
+    parser.add_argument('-e','--experiments', type=str, action='store',
         help=
         '''
         List of experiment configurations.
@@ -611,7 +621,8 @@ if __name__ == '__main__':
         Warning: If argument FUNC is a function, and if argument BASE
         is used, this must be a list of dictionaries, which are then
         passed to FUNC together with the items in BASE in form of keyword arguments. 
-        ''')
+        ''',
+        default='"[]"')
     parser.add_argument('-b', '--base', type=str, action='store',
         help=
         '''
@@ -686,43 +697,56 @@ if __name__ == '__main__':
     args.experiments = eval(args.experiments)
     init_dict = eval(args.base)
     module_name = args.func
-    try:
-        module = importlib.import_module(module_name)
-    except ImportError:
-        real_module_name = '.'.join(module_name.split('.')[:-1])
-        module = importlib.import_module(real_module_name)
-    try:  # Suppose class is last part of given module argument
-        class_or_function_name = module_name.split('.')[-1]
-        cl_or_fn = getattr(module, class_or_function_name)
-    except AttributeError:  # Or maybe last part but capitalized?
-        class_or_function_name = class_or_function_name.title()
-        cl_or_fn = getattr(module, class_or_function_name)
-    if args.name == '_':
-        args.name = class_or_function_name
-    if inspect.isclass(cl_or_fn):
-        fn = cl_or_fn(**init_dict)
-    else:
-        def fn(experiment):
-            if init_dict:
-                init_dict.update(experiment)
-            return cl_or_fn(**init_dict)
-    if args.analyze:
+    regexp=re.compile('(\w+\.)+(\w+)')
+    if regexp.match(module_name):
         try:
-            split_analyze = args.analyze.split('.')
+            module = importlib.import_module(module_name)
+        except ImportError:
+            real_module_name = '.'.join(module_name.split('.')[:-1])
+            module = importlib.import_module(real_module_name)
+        try:  # Suppose class is last part of given module argument
+            class_or_function_name = module_name.split('.')[-1]
+            cl_or_fn = getattr(module, class_or_function_name)
+        except AttributeError:  # Or maybe last part but capitalized?
+            class_or_function_name = class_or_function_name.title()
+            cl_or_fn = getattr(module, class_or_function_name)
+        if args.name == '_':
+            args.name = class_or_function_name
+        if inspect.isclass(cl_or_fn):
+            fn = cl_or_fn(**init_dict)
+        else:
+            def fn(experiment):
+                if init_dict:
+                    init_dict.update(experiment)
+                return cl_or_fn(**init_dict)
+        if args.analyze:
             try:
-                if len(split_analyze) > 1:  # Analyze function in different module
-                    analyze_module = importlib.import_module('.'.join(split_analyze[:-1]))  
-                else:
-                    analyze_module = module
-                analyze_fn = getattr(analyze_module, split_analyze[-1])
-            except AttributeError:  # is analyze maybe a function of class instance?
-                analyze_fn = getattr(fn, args.analyze)
-        except: 
+                split_analyze = args.analyze.split('.')
+                try:
+                    if len(split_analyze) > 1:  # Analyze function in different module
+                        analyze_module = importlib.import_module('.'.join(split_analyze[:-1]))  
+                    else:
+                        analyze_module = module
+                    analyze_fn = getattr(analyze_module, split_analyze[-1])
+                except AttributeError:  # is analyze maybe a function of class instance?
+                    analyze_fn = getattr(fn, args.analyze)
+            except: 
+                analyze_fn = None
+                traceback.format_exc()
+                warnings.warn(MSG_ERROR_LOAD('function {}'.format(args.analyze)))   
+        else:
             analyze_fn = None
-            traceback.format_exc()
-            warnings.warn(MSG_ERROR_LOAD('function {}'.format(args.analyze)))   
+        module_path=os.path.dirname(module.__file__)
     else:
-        analyze_fn = None
+        fn= lambda _: subprocess.check_call(module_name,shell=True)
+        if args.analyze:
+            analzye_fn=lambda _:subprocess.check_call(args.analyze,shell=True)
+        else:
+            analyze_fn=None
+        experiments=[]
+        if args.name == '_':
+            raise ValueError('Must specify name')
+        module_name=os.getcwd()
     conduct(func=fn, experiments=args.experiments, name=args.name,
             supp_data=' '.join(sys.argv),
             analyze=analyze_fn,
@@ -732,4 +756,4 @@ if __name__ == '__main__':
             no_date=args.no_date,
             no_dill=args.no_dill,
             parallel=args.parallel,
-            module_name=module.__name__)
+            module_path=module_path)
