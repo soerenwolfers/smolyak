@@ -1,7 +1,6 @@
 *-blx.bib
-experiments
-smolyak/experiments/*
-smolyak/experiments
+/smolyak/experiments/*
+/smolyak/experiments
 restats
 docs/_build
 *.rst~
