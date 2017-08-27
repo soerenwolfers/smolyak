@@ -28,6 +28,7 @@ from multiprocessing import Lock, Pool
 import cPickle
 import subprocess
 import shlex
+from subprocess import CalledProcessError
 class GitError(Exception):
     def __init__(self, message, git_log):
         super(GitError, self).__init__(message)
@@ -52,14 +53,14 @@ MSG_ERR_PARALLEL = 'Error during parallel execution. Try running with parallel=F
 MSG_ERROR_GIT_BRANCH = 'Active branch is _experiments. This branch should only be used for archiving snapshots of other branches, not be archived itself'
 MSG_ERROR_BASH_ANALYSIS = 'Cannot analyze output in bash mode'
 MSG_ERROR_GIT_DETACHED = 'Git snapshots do not work in detached HEAD state'
-MSG_WITHIN_GIT='Saving experiments within the git repository can cause problems and makes little sense'
+MSG_WITHIN_GIT='Saving experiments within the git repository can cause problems with the creation of git snapshots'
 MSG_CMD_ARG = 'Command line arguments to python call: "{}"'
 GRP_WARN = 'Warning'
 GRP_ERR = 'Error'
 
 def conduct(func, experiments=None, name=None, path='experiments', supp_data=None,
             analyze=None, runtime_profile=False, memory_profile=False,
-            git=False, no_date=False, no_dill=False, parallel=True, module_path=None):
+            git=False, no_date=False, no_dill=False, parallel=False, module_path=None):
     '''   
     Call :code:`func` once for each entry of :code:`experiments` and store
     results along with auxiliary information such as runtime and memory usage.
@@ -195,10 +196,10 @@ def conduct(func, experiments=None, name=None, path='experiments', supp_data=Non
     if git:
         try:
             with capture_output() as c:
-                snapshot_id, git_log,git_directory = _git_snapshot(func, name, module_path)
+                snapshot_id, git_log,_ = _git_snapshot(message="for experiment {}".format(directory), path=module_path)
             _store_data(git_file, MSG_GIT_LOG.format(snapshot_id, git_log))
-            if directory.startswith(os.path.abspath(git_directory)+os.sep):
-                log.log(group=GRP_WARN,message=MSG_WITHIN_GIT)
+            #if directory.startswith(os.path.abspath(git_directory)+os.sep):
+            #log.log(group=GRP_WARN,message=MSG_WITHIN_GIT)
             log.log(message=MSG_GIT_DONE.format(snapshot_id, git_file))
         except GitError as e:
             _store_data(stderr_file, c.stderr + str(e.message))
@@ -388,7 +389,9 @@ def analyze(func, search_pattern='*', path='', need_unique=False, log=None, no_d
         serializer = pickle
     MSG_FAILED_ANALYSIS = lambda stderr_file: 'Analysis could not be completed. Check {}'.format(stderr_file)
     MSG_STORE_ANALYSIS = lambda name: 'Could not serialize results of analysis'
-    for (info, results, directory) in load(search_pattern=search_pattern, path=path, need_unique=need_unique, info_only=False):
+    tmp=load(search_pattern=search_pattern, path=path, need_unique=False, info_only=False)
+    generator=list(tmp) if need_unique else tmp
+    for (info, results, directory) in generator:
         analysis_directory = os.path.join(directory, 'analysis')
         shutil.rmtree(analysis_directory, ignore_errors=True)
         os.mkdir(analysis_directory)
@@ -546,10 +549,9 @@ def _git_command(string,add_input=True):
 def _git_id():
     return _git_command('log --format="%H" -n 1',add_input=False).rstrip()
 
-def _git_snapshot(func, name, module_path=None):
+def _git_snapshot(path, message=''):
     initial_directory = os.getcwd()
-    module_path = module_path or os.path.dirname(sys.modules[func.__module__].__file__)
-    os.chdir(module_path)
+    os.chdir(path)
     git_directory = _git_command('rev-parse --show-toplevel',add_input=False).rstrip()
     os.chdir(git_directory)
     active_branch = _git_command('rev-parse --abbrev-ref HEAD',add_input=False)
@@ -562,28 +564,35 @@ def _git_snapshot(func, name, module_path=None):
         tmp=_git_command('stash -u',add_input=False)
         out+='$ git stash -u \n'+tmp
         stash= (tmp.count('\n')>1)
+        if stash:
+            try:
+                out+=_git_command('checkout stash@{0} -- .gitignore')#These lines are necessary to clean
+                out+=_git_command('checkout stash@{0} -- */.gitignore')#the working directory of newly
+            except CalledProcessError:
+                pass
+            out+=_git_command('clean -fd')#non-ignored files, to be able to apply the stash later on
         try:
             out+=_git_command('checkout _experiments')
         except:
             out+=_git_command('checkout -b _experiments')
         out+=active_branch
         old_id=_git_id()
-        out+=_git_command('merge -s ours {0} --no-edit -m "Snapshot of branch {0} for experiment {1}"'.format(active_branch,name))
+        out+=_git_command('merge -s ours {0} --no-edit -m "Snapshot of branch {0} {1}"'.format(active_branch,message))
         new_id=_git_id()
         if new_id==old_id:
-            out+=_git_command('commit --allow-empty -m "Snapshot of branch {0} for experiment {1}"'.format(active_branch,name))
+            out+=_git_command('commit --allow-empty -m "Snapshot of branch {0} {1}"'.format(active_branch,message))
         out+=_git_command('checkout --detach {}'.format(active_branch))
         out+=_git_command('reset --soft _experiments')
         out+=_git_command('checkout _experiments')
         out+=_git_command('commit --allow-empty --amend -C HEAD')
         if stash:
-            out+=_git_command('stash apply')
+            out += _git_command('stash apply')
         out+=_git_command('add --all')
         out+=_git_command('commit --allow-empty --amend -C HEAD')
         id = _git_id() # @ReservedAssignment
         out+=_git_command('checkout {}'.format(active_branch))
         if stash:
-            out+=_git_command('stash pop')
+            out += _git_command('stash pop')
     except:
         raise GitError(traceback.format_exc(), out)
     os.chdir(initial_directory)

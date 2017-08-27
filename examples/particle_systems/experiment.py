@@ -2,7 +2,7 @@ import numpy as np
 from smolyak.indices import MixedDifferences, MultiIndex
 from smolyak.applications.particle_systems.optimal_control import iteration
 from smolyak.approximator import Decomposition, Approximator
-from smolyak import experiments
+from smolyak import labbook
 import os
 import pickle      
 from smolyak.aux import plots
@@ -79,9 +79,9 @@ if __name__ == '__main__':
     #Y=np.linspace(0.1,2,20)
     #rsa=ResponseSurfaceApproximation([X,Y])
     #tests=[(i,j) for i in X for j in Y]
-    #path=experiments.conduct(tests=tests,func=rsa.global_opt,overwrite=True,user_data=[X,Y])
+    #path=labbook.conduct(tests=tests,func=rsa.global_opt,overwrite=True,user_data=[X,Y])
     #path='2017/7/31/global_opt'
-    #info,results=experiments.load(path=path)
+    #info,results=labbook.load(path=path)
     #os.chdir(path)
     #rsa.analyze_global_opt(results,info)
     opts={
@@ -92,12 +92,11 @@ if __name__ == '__main__':
         'random':True
     }
     rsa=Experiment(**opts)
-    tests=[
-        {'T_max':2**l} for l in range(5)
+    experiments=[
+        {'T_max':2**l} for l in range(3)
     ]
-    name='rand_opt_alpha{}_rho{}_power{}_d{}'.format(opts['alpha'],opts['rho'],opts['power'],opts['d'])
-    path=experiments.conduct(tests=tests, func=rsa, supp_data=opts,runtime_profile=False,memory_profile=True,analyze=rsa.analyze)
-    #path='experiments/2017/8/9/'+name
-    info,results=experiments.load(path=path)
-    os.chdir(path)
-    rsa.analyze(results,info)
+    name='rand_opt_alpha{alpha}_rho{rho}_power{power}_d{d}'.format(**opts)
+    path=labbook.conduct(experiments=experiments, func=rsa.__call__, supp_data=opts,runtime_profile=True,memory_profile=False,git=True,parallel=False)
+    #path='labbook/2017/8/9/'+name
+    labbook.analyze(analyze, path=path, need_unique=True)
+    
