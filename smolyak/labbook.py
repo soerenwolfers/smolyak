@@ -29,6 +29,8 @@ import cPickle
 import subprocess
 import shlex
 from subprocess import CalledProcessError
+import pkg_resources
+import platform
 class GitError(Exception):
     def __init__(self, message, git_log):
         super(GitError, self).__init__(message)
@@ -57,7 +59,8 @@ MSG_WITHIN_GIT='Saving experiments within the git repository can cause problems 
 MSG_CMD_ARG = 'Command line arguments to python call: "{}"'
 GRP_WARN = 'Warning'
 GRP_ERR = 'Error'
-
+#TODO: SEEDING
+#TODO: Use from pathos.multiprocessing import ProcessingPool as Pool
 def conduct(func, experiments=None, name=None, path='experiments', supp_data=None,
             analyze=None, runtime_profile=False, memory_profile=False,
             git=False, no_date=False, no_dill=False, parallel=False, module_path=None):
@@ -78,6 +81,8 @@ def conduct(func, experiments=None, name=None, path='experiments', supp_data=Non
     specified by :code:`name` and :code:`path`:
         *info.pkl:
             *name: Name of experiment series (str)
+            *ID: Alphanumeric 8 character string identifying the experiment series
+            *modules: Module versions
             *time: Time of execution (datetime.datetime)
             *experiments: Parameter :code:`experiments`
             *runtime: Runtime of each experiment (list of floats)
@@ -159,8 +164,9 @@ def conduct(func, experiments=None, name=None, path='experiments', supp_data=Non
     source_file_name = os.path.join(directory, 'source.txt')
     git_file = os.path.join(directory, 'git.txt')
     ###########################################################################
-    MSG_START = ('Starting experiment series \'{}\' with {} experiment{}.'.format(name, n_experiments, 's' if n_experiments != 1 else '')
-                + (' Arguments: \n\t{}'.format('\n\t'.join(map(str, experiments))) if not no_arg_mode else ''))
+    MSG_START = 'Starting experiment series \'{}\' with ID \'{}\''
+    MSG_EXPERIMENTS =('Running {} experiment{}.'.format(n_experiments, 's' if n_experiments != 1 else '')
+                + ('with arguments: \n\t{}'.format('\n\t'.join(map(str, experiments))) if not no_arg_mode else ''))
     MSG_INFO = 'This log and all outputs can be found in {}'.format(directory)
     MSG_TYPE = (('# Experiment series was conducted with instance of class {}'.format(func.__class__.__name__)
                if hasattr(func, '__class__') else 
@@ -168,15 +174,20 @@ def conduct(func, experiments=None, name=None, path='experiments', supp_data=Non
               + ' in the following module: \n {}')
     MSG_ERROR_GIT = 'Error while creating git snapshot Check {}'.format(stderr_file)
     MSG_GIT_DONE = 'Created git commit {} in branch _experiments as snapshot of current state of git repository. Check {}'
-    MSG_GIT_LOG = 'Created git commit {} in branch _experiments as snapshot of current state of git repository using the following commands:\n {}'
+    STR_GIT_LOG = '#Created git commit {} in branch _experiments as snapshot of current state of git repository using the following commands:\n{}'
+    STR_COMMIT="For experiment with ID {} in {}"
     MSG_SOURCE = 'Could not find source code. Check {}'.format(stderr_file)
     ###########################################################################
     log = Log(write_verbosity=True, print_verbosity=True, file_name=log_file)
-    log.log(MSG_START)
+    ID = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(8))
+    log.log(MSG_START.format(name,ID))
     log.log(MSG_INFO)
     info = dict()
     info['name'] = name
+    info['ID'] = ID
     info['time'] = datetime.datetime.fromtimestamp(time.time())
+    info['modules'] = _get_module_versions()
+    info['system'] = _get_system_info()
     if supp_data:
         info['supp_data'] = supp_data
     info['runtime'] = [None] * n_experiments
@@ -195,9 +206,9 @@ def conduct(func, experiments=None, name=None, path='experiments', supp_data=Non
         log.log(group=GRP_WARN, message=MSG_SOURCE)
     if git:
         try:
-            with capture_output() as c:
-                snapshot_id, git_log,_ = _git_snapshot(message="for experiment {}".format(directory), path=module_path)
-            _store_data(git_file, MSG_GIT_LOG.format(snapshot_id, git_log))
+            #with capture_output() as c:
+            snapshot_id, git_log,_ = _git_snapshot(message=STR_COMMIT.format(ID,directory), path=module_path)
+            _store_data(git_file, STR_GIT_LOG.format(snapshot_id, git_log))
             #if directory.startswith(os.path.abspath(git_directory)+os.sep):
             #log.log(group=GRP_WARN,message=MSG_WITHIN_GIT)
             log.log(message=MSG_GIT_DONE.format(snapshot_id, git_file))
@@ -242,6 +253,7 @@ def conduct(func, experiments=None, name=None, path='experiments', supp_data=Non
     args = ((i, experiment, directory, func, analyze, memory_profile,
      runtime_profile, results_file, log_file, 'pickle' if serializer == pickle else 'dill', no_arg_mode) 
           for i, experiment in enumerate(experiments))
+    log.log(message=MSG_EXPERIMENTS)
     if parallel:
         pool = Pool(processes=n_experiments, initializer=_init, initargs=(lock, analyze_lock))
         try:
@@ -265,6 +277,30 @@ def _init(l, al):
     global analyze_lock
     lock = l
     analyze_lock = al
+    
+def _get_module_versions():
+    names=sys.modules.keys()
+    names=[name for name in names if not '.' in name]
+    module_versions={}
+    for name in names:
+        if hasattr(sys.modules[name],'__version__'):
+                module_versions.update({name:sys.modules[name].__version__+'(__version__)'})
+        else:
+            try:
+                module_versions.update({name:pkg_resources.get_distribution(name).version+'(pip)'})
+            except:
+                pass
+    return module_versions
+
+def _get_system_info():
+    system_info = '; '.join([platform.platform(),platform.python_implementation()+' '+platform.python_version()])
+    try:
+        import psutil
+        system_info+='; '+str(psutil.cpu_count(logical=False))+' cores'
+        system_info+='; '+str(float(psutil.virtual_memory().total)/2**30)+ ' GiB'
+    except:
+        pass
+    return system_info
     
 def _run_single_experiment(arg):
     (i, experiment, directory, func, analyze, memory_profile,
@@ -389,7 +425,7 @@ def analyze(func, search_pattern='*', path='', need_unique=False, log=None, no_d
         serializer = pickle
     MSG_FAILED_ANALYSIS = lambda stderr_file: 'Analysis could not be completed. Check {}'.format(stderr_file)
     MSG_STORE_ANALYSIS = lambda name: 'Could not serialize results of analysis'
-    tmp=load(search_pattern=search_pattern, path=path, need_unique=False, info_only=False)
+    tmp=load(search_pattern=search_pattern, path=path, need_unique=False, no_results=False)
     generator=list(tmp) if need_unique else tmp
     for (info, results, directory) in generator:
         analysis_directory = os.path.join(directory, 'analysis')
@@ -427,7 +463,7 @@ def analyze(func, search_pattern='*', path='', need_unique=False, log=None, no_d
                         warnings.warn(message=MSG_STORE_ANALYSIS)
         os.chdir(directory)          
 
-def load(search_pattern='*', path='', info_only=False, need_unique=True):
+def load(search_pattern='*', path='', ID=None,no_results=False, need_unique=True):
     '''
     Load results of (possibly multiple) experiment series. 
     
@@ -438,8 +474,8 @@ def load(search_pattern='*', path='', info_only=False, need_unique=True):
     :type search_pattern: String, e.g. search_pattern='algo*'
     :param path: Path of exact location is known (possibly only partially), relative or absolute
     :type path: String, e.g. '/home/work/2017/6/<name>' or 'work/2017/6'
-    :param info_only: Only load information about experiment series, not results
-    :type info_only: Boolean
+    :param no_results: Only load information about experiment series, not results
+    :type no_results: Boolean
     :param need_unique: Require unique identification of experiment series.
     :type need_unique: Boolean
     :return: Information about run(s) and list(s) of results
@@ -483,24 +519,28 @@ def load(search_pattern='*', path='', info_only=False, need_unique=True):
     series.extend(files.find_directories(search_pattern, path=path))
     series.extend(files.find_directories('*/' + search_pattern, path=path))
     series = [serie for serie in series if _is_experiment_directory(serie)]
+    if ID:
+        if len(ID)<8:
+            ID=ID+'.\{'+str(8-len(ID))+'\}'
+        series=[serie for serie in series if regexp.match(get_output(serie,True)[0]['ID'])]
     series = unique(series)
-    def get_output(serie):
+    def get_output(serie,no_results):
         info_file_name = os.path.join(serie, 'info.pkl')
         info = assemble_file_contents(info_file_name, dict, need_start=True, update=True)
-        if not info_only:
+        if no_results:
+            return (info, serie)
+        else:
             results_file_name = os.path.join(serie, 'results.pkl')
             results = assemble_file_contents(results_file_name, list, need_start=False)
             return (info, results, serie)
-        else:
-            return (info, serie)
     if not need_unique:
-        return (get_output(serie) for serie in series)
+        return (get_output(serie,no_results=no_results) for serie in series)
     else:
         if len(series) == 0:
             raise ValueError(MSG_NO_MATCH)
         if len(series) > 1:
             raise ValueError(MSG_MULTI_MATCH(series))
-        return get_output(series[0])
+        return get_output(series[0],no_results=no_results)
 
 def _is_experiment_directory(directory):
     return os.path.isfile(os.path.join(directory, 'info.pkl'))
@@ -564,37 +604,48 @@ def _git_snapshot(path, message=''):
         tmp=_git_command('stash -u',add_input=False)
         out+='$ git stash -u \n'+tmp
         stash= (tmp.count('\n')>1)
-        if stash:
-            try:
-                out+=_git_command('checkout stash@{0} -- .gitignore')#These lines are necessary to clean
-                out+=_git_command('checkout stash@{0} -- */.gitignore')#the working directory of newly
-            except CalledProcessError:
-                pass
-            out+=_git_command('clean -fd')#non-ignored files, to be able to apply the stash later on
+        #if stash:
+            #try:
+            #    out+=_git_command('checkout stash@{0} -- .gitignore')#These lines are necessary to clean
+            #    out+=_git_command('checkout stash@{0} -- */.gitignore')#the working directory of newly
+            #except CalledProcessError:
+            #    pass
+            #out+=_git_command('clean -fd')#non-ignored files, to be able to apply the stash later on
         try:
             out+=_git_command('checkout _experiments')
         except:
             out+=_git_command('checkout -b _experiments')
         out+=active_branch
         old_id=_git_id()
-        out+=_git_command('merge -s ours {0} --no-edit -m "Snapshot of branch {0} {1}"'.format(active_branch,message))
+        out+=_git_command('merge -s ours {0} --no-edit -m "Snapshot of branch {0} \n {1}"'.format(active_branch,message))
         new_id=_git_id()
         if new_id==old_id:
-            out+=_git_command('commit --allow-empty -m "Snapshot of branch {0} {1}"'.format(active_branch,message))
+            out+=_git_command('commit --allow-empty -m "Snapshot of branch {0} \n {1}"'.format(active_branch,message))
         out+=_git_command('checkout --detach {}'.format(active_branch))
         out+=_git_command('reset --soft _experiments')
         out+=_git_command('checkout _experiments')
         out+=_git_command('commit --allow-empty --amend -C HEAD')
         if stash:
-            out += _git_command('stash apply')
+            try:
+                out += _git_command('stash apply --index')
+            except subprocess.CalledProcessError as e:
+                pass
         out+=_git_command('add --all')
         out+=_git_command('commit --allow-empty --amend -C HEAD')
         id = _git_id() # @ReservedAssignment
         out+=_git_command('checkout {}'.format(active_branch))
         if stash:
-            out += _git_command('stash pop')
+            drop=True
+            try:
+                out += _git_command('stash apply --index')
+            except subprocess.CalledProcessError as e:
+                drop=False
+            if drop:
+                out += _git_command('stash drop')
     except:
         raise GitError(traceback.format_exc(), out)
+    if not drop:
+        raise GitError('Your previous working tree is stashed, but could not be reapplied.',out)
     os.chdir(initial_directory)
     return id, out, git_directory
 
