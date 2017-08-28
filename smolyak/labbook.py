@@ -24,22 +24,23 @@ import importlib
 import random
 import string
 import re
-from multiprocessing import Lock, Pool
+from multiprocessing import Manager
 import cPickle
 import subprocess
 import shlex
-from subprocess import CalledProcessError
-import pkg_resources
 import platform
+from pip import operations
+import numpy
+import json
 class GitError(Exception):
     def __init__(self, message, git_log):
         super(GitError, self).__init__(message)
         self.git_log = git_log
-MSG_MEMPROF = 'Could not store memory profiler. Install memory_profiler via pip install memory_profiler.'
+MSG_MEMPROF = 'Could not find memory_profiler. Install memory_profiler via `pip install memory_profiler`.'
 
 MSG_SERIALIZER = ('Could not find dill. Some items might not be storable. '
     + ('Storage of numpy arrays will be slow' if sys.version[0] < 3 else '')
-    + 'Install dill via pip install dill.')
+    + 'Install dill via `pip install dill`.')
 MSG_STORE_RESULT = 'Could not serialize results'
 MSG_STORE_INFO = lambda keys: 'Could not store keys {}.'.format(keys)
 MSG_FINISH_EXPERIMENT = lambda i, runtime: 'Experiment {} finished. Runtime: {}'.format(i, runtime)
@@ -57,13 +58,16 @@ MSG_ERROR_BASH_ANALYSIS = 'Cannot analyze output in bash mode'
 MSG_ERROR_GIT_DETACHED = 'Git snapshots do not work in detached HEAD state'
 MSG_WITHIN_GIT='Saving experiments within the git repository can cause problems with the creation of git snapshots'
 MSG_CMD_ARG = 'Command line arguments to python call: "{}"'
+MSG_WARN_PARALLEL = ('Could not find pathos. This might cause problems with parallel execution.'
+    + 'Install pathos via `pip install pathos`.')
 GRP_WARN = 'Warning'
 GRP_ERR = 'Error'
-#TODO: SEEDING
-#TODO: Use from pathos.multiprocessing import ProcessingPool as Pool
-def conduct(func, experiments=None, name=None, path='experiments', supp_data=None,
+LEN_ID=8
+LEN_TMP=8
+def conduct(func, experiments=None, name=None, path='labbook', supp_data=None,
             analyze=None, runtime_profile=False, memory_profile=False,
-            git=False, no_date=False, no_dill=False, parallel=False, module_path=None,external=False):
+            git=False, no_date=False, no_dill=False, parallel=False, module_path=None,
+            external=False):
     '''   
     Call :code:`func` once for each entry of :code:`experiments` and store
     results along with auxiliary information such as runtime and memory usage.
@@ -88,21 +92,21 @@ def conduct(func, experiments=None, name=None, path='experiments', supp_data=Non
             *runtime: Runtime of each experiment (list of floats)
             *status: Status of each experiment (list of ('queued'/'finished'/'failed'))
             *(optional)supp_data: Parameter :code:`supp_data`
-        *log.txt
-        *(optional)git.txt
+        *log.txt: Log of experiment series
+        *(optional)git.txt: Log of git snapshot creation
         *results.pkl: List of results of experiments 
         *source.txt: Source code of the module containing :code:`func`
         *(optional)stderr.txt
         *For each experiment a subdirectory "experiment<i>" with:
             *user_files/ (Working directory for call of :code:`func`)
             *input.txt: Argument passed to :code:`func`
-            *stderr.txt:
-            *stdout.txt:
+            *(optional)stderr.txt:
+            *(optional)stdout.txt:
             *(optional)runtime_profile.txt: Extensive runtime information for each experiment (list of strings)
             *(optional)memory_profile.txt: Memory usage information for each experiment (list of strings)
         *(optional) analysis/: output of function :analysis:
-            *stderr.txt
-            *stdout.txt
+            *(optional)stderr.txt
+            *(optional)stdout.txt
             *user_files/ (Working directory for call of :code:`analyze`
 
         
@@ -139,13 +143,26 @@ def conduct(func, experiments=None, name=None, path='experiments', supp_data=Non
     :param module_path: Specify location of module of func. This is used for 
     the creation of a git snapshot. If not specified, this is determined automatically
     :type module_path: String
-    :param external: Using this flag turns of the storage of module versions
+    :param external: Specify whether :code:`func` is a python function or a string
+        representing an external call, such as 'echo {}'. In this case, the curly 
+        braces get replaced by the entries of :code:`experiments`
+    :type external: String
     '''
+    if external:
+        external_string=func
+        def func(*experiment):
+            out=subprocess.check_output(shlex.split(external_string.format(*experiment)),stderr=subprocess.STDOUT)
+            sys.stdout.write(out)
     if not name:
-        try: 
-            name = func.__name__
-        except AttributeError:
-            name = func.__class__.__name__
+        if external:
+            regexp = re.compile('\w+')
+            name = regexp.match(external_string).group(0)
+        else:
+            try: 
+                name = func.__name__
+            except AttributeError:
+                name = func.__class__.__name__
+    print(path)
     directory = _get_directory(name, path, no_date)
     module_path = module_path or os.path.dirname(sys.modules[func.__module__].__file__)
     no_arg_mode = False
@@ -166,13 +183,12 @@ def conduct(func, experiments=None, name=None, path='experiments', supp_data=Non
     git_file = os.path.join(directory, 'git.txt')
     ###########################################################################
     MSG_START = 'Starting experiment series \'{}\' with ID \'{}\''
-    MSG_EXPERIMENTS =('Running {} experiment{}.'.format(n_experiments, 's' if n_experiments != 1 else '')
-                + ('with arguments: \n\t{}'.format('\n\t'.join(map(str, experiments))) if not no_arg_mode else ''))
+    MSG_EXPERIMENTS =('Running {} experiment{}'.format(n_experiments, 's' if n_experiments != 1 else '')
+                + (' with arguments: \n\t{}'.format('\n\t'.join(map(str, experiments))) if not no_arg_mode else '.'))
     MSG_INFO = 'This log and all outputs can be found in {}'.format(directory)
-    MSG_TYPE = (('# Experiment series was conducted with instance of class {}'.format(func.__class__.__name__)
-               if hasattr(func, '__class__') else 
-               '# Experiment series was conducted with function {}'.format(func.__name__))
-              + ' in the following module: \n {}')
+    MSG_TYPE = ('# Experiment series was conducted with a {}'.format(func.__class__.__name__)
+               +(' called {}'.format(func.__name__) if hasattr(func,'__name__') else '')
+              + ' from the module {} whose source code is given below:\n{}')
     MSG_ERROR_GIT = 'Error while creating git snapshot Check {}'.format(stderr_file)
     MSG_GIT_DONE = 'Created git commit {} in branch _experiments as snapshot of current state of git repository. Check {}'
     STR_GIT_LOG = '#Created git commit {} in branch _experiments as snapshot of current state of git repository using the following commands:\n{}'
@@ -180,15 +196,24 @@ def conduct(func, experiments=None, name=None, path='experiments', supp_data=Non
     MSG_SOURCE = 'Could not find source code. Check {}'.format(stderr_file)
     ###########################################################################
     log = Log(write_verbosity=True, print_verbosity=True, file_name=log_file)
-    ID = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(8))
+    ID = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(LEN_ID))
     log.log(MSG_START.format(name,ID))
     log.log(MSG_INFO)
     info = dict()
     info['name'] = name
     info['ID'] = ID
     info['time'] = datetime.datetime.fromtimestamp(time.time())
+    info['external'] = external
     if not external:
+        info['seed'] = [None] * n_experiments
         info['modules'] = _get_module_versions()
+        try: 
+            source = MSG_TYPE.format(sys.modules[func.__module__].__file__,''.join(inspect.getsourcelines(sys.modules[func.__module__])[0]))
+        except TypeError:
+            _store_data(stderr_file, traceback.format_exc())
+            log.log(group=GRP_WARN, message=MSG_SOURCE)
+        _store_data(source_file_name, source)
+    info['parallel'] = parallel
     info['system'] = _get_system_info()
     if supp_data:
         info['supp_data'] = supp_data
@@ -201,11 +226,6 @@ def conduct(func, experiments=None, name=None, path='experiments', supp_data=Non
             log.log(group=GRP_WARN, message=MSG_MEMPROF)
             memory_profile = False
     info['status'] = ['queued'] * n_experiments
-    try: 
-        source = MSG_TYPE.format(''.join(inspect.getsourcelines(sys.modules[func.__module__])[0]))
-    except TypeError:
-        _store_data(stderr_file, traceback.format_exc())
-        log.log(group=GRP_WARN, message=MSG_SOURCE)
     if git:
         try:
             with capture_output() as c:
@@ -219,7 +239,8 @@ def conduct(func, experiments=None, name=None, path='experiments', supp_data=Non
             _store_data(git_file, e.git_log)
             log.log(group=GRP_ERR, message=MSG_ERROR_GIT)
             raise
-    info_list = [info, {'experiments':experiments}]
+    info_list = [info, {'experiments':experiments},
+                 {'func': external_string if external else func.__repr__()}]
     if not no_dill:
         try: 
             import dill
@@ -236,10 +257,12 @@ def conduct(func, experiments=None, name=None, path='experiments', supp_data=Non
                     serializer.dump(temp, fp)
                 except (TypeError, pickle.PicklingError):
                     log.log(group=GRP_WARN, message=MSG_STORE_INFO(temp.keys()))
-    def _update_info(i, runtime, status, memory):
+    def _update_info(i, runtime, status, memory, seed):
         info['runtime'][i] = runtime
         if memory_profile:
             info['memory'][i] = memory
+        if not external:
+            info['seed'][i] = seed
         info['status'][i] = status     
         store_info()
     def store_result(result):
@@ -249,16 +272,21 @@ def conduct(func, experiments=None, name=None, path='experiments', supp_data=Non
             except (TypeError, pickle.PicklingError):
                 log.log(group=GRP_WARN, message=MSG_STORE_RESULT)
     store_info()
-    _store_data(source_file_name, source)
     old_wd = os.getcwd()
-    lock = Lock()
-    analyze_lock = Lock()
+    locker=Locker()
     args = ((i, experiment, directory, func, analyze, memory_profile,
-     runtime_profile, results_file, log_file, 'pickle' if serializer == pickle else 'dill', no_arg_mode) 
-          for i, experiment in enumerate(experiments))
+             runtime_profile, results_file, log_file, 
+             'pickle' if serializer == pickle else 'dill', no_arg_mode,locker,external) 
+            for i, experiment in enumerate(experiments))
     log.log(message=MSG_EXPERIMENTS)
     if parallel:
-        pool = Pool(processes=n_experiments, initializer=_init, initargs=(lock, analyze_lock))
+        try:
+            from pathos.multiprocessing import ProcessingPool as Pool
+            pool = Pool(nodes=n_experiments)
+        except ImportError:
+            log.log(group=GRP_WARN,message=MSG_WARN_PARALLEL)
+            from multiprocessing import Pool 
+            pool = Pool(processes=n_experiments)
         try:
             outputs = pool.map(_run_single_experiment, args)
         except cPickle.PicklingError:
@@ -266,8 +294,9 @@ def conduct(func, experiments=None, name=None, path='experiments', supp_data=Non
             raise
         for output in outputs:
             _update_info(*output)
+        pool.close()
+        pool.join()
     else:
-        _init(lock, analyze_lock)
         for arg in args:
             output = _run_single_experiment(arg)
             _update_info(*output)
@@ -275,11 +304,12 @@ def conduct(func, experiments=None, name=None, path='experiments', supp_data=Non
     log.log(MSG_FINISHED)
     return directory
 
-def _init(l, al):
-    global lock
-    global analyze_lock
-    lock = l
-    analyze_lock = al
+
+class Locker(object):
+    def __init__(self):
+        mgr=Manager()
+        self.lock=mgr.Lock()
+        self.analyze_lock=mgr.Lock()
     
 def _get_module_versions():
     names=sys.modules.keys()
@@ -287,12 +317,19 @@ def _get_module_versions():
     module_versions={}
     for name in names:
         if hasattr(sys.modules[name],'__version__'):
-                module_versions.update({name:sys.modules[name].__version__+'(__version__)'})
+                module_versions[name]=sys.modules[name].__version__+'(__version__)'
+        #else:
+        #    try:
+        #        module_versions[name]=pkg_resources.get_distribution(name).version+'(pip)'
+        #    except:
+        #        pass
+    pip_list=operations.freeze.get_installed_distributions()
+    for entry in pip_list:
+        (key,val)=entry.project_name,entry.version
+        if key in module_versions:
+            module_versions[key]+='; '+val+'(pip)'
         else:
-            try:
-                module_versions.update({name:pkg_resources.get_distribution(name).version+'(pip)'})
-            except:
-                pass
+            module_versions[key]=val+'(pip)'
     return module_versions
 
 def _get_system_info():
@@ -307,7 +344,7 @@ def _get_system_info():
     
 def _run_single_experiment(arg):
     (i, experiment, directory, func, analyze, memory_profile,
-     runtime_profile, results_file, log_file, serializer, no_arg_mode) = arg
+     runtime_profile, results_file, log_file, serializer, no_arg_mode,locker,external) = arg
     ###########################################################################
     stderr_file = os.path.join(directory, 'stderr.txt')
     stderr_files = lambda i: os.path.join(directory, 'experiment{}'.format(i), 'stderr.txt')
@@ -321,8 +358,8 @@ def _run_single_experiment(arg):
     MSG_EXCEPTION_EXPERIMENT = lambda i: 'Exception during execution of experiment {}. Check {}'.format(i, stderr_file)
     MSG_START_EXPERIMENT = lambda i: ('Starting experiment {}.'.format(i) + 
                                       (' Argument:\n\t{}'.format(str(experiment)) if not no_arg_mode else '')) 
-    ###########################################################################
-    log = Log(write_verbosity=True, print_verbosity=True, file_name=log_file, lock=lock)
+    ###########################################################################   
+    log = Log(write_verbosity=True, print_verbosity=True, file_name=log_file, lock=locker.lock)
     if serializer == 'pickle':
         serializer = pickle
     else:
@@ -338,6 +375,9 @@ def _run_single_experiment(arg):
     runtime = None
     output = None
     memory = None
+    seed = None
+    if not external:
+        seed=random.randint(0,2**32-1)
     if  hasattr(func, '__name__'):
         temp_func = func
     else:
@@ -356,6 +396,10 @@ def _run_single_experiment(arg):
         with capture_output() as c:
             tic = timeit.default_timer()
             try:
+                if not external:
+                    random.seed(seed)
+                    if 'numpy' in sys.modules:
+                        numpy.random.seed(seed)
                 if no_arg_mode:
                     output = temp_func()
                 else:
@@ -385,29 +429,26 @@ def _run_single_experiment(arg):
             _store_data(memory_profile_files(i), m.getvalue())
             memory = _max_mem(m.getvalue())
     except Exception:
-        lock.acquire()
-        _store_data(stderr_file, traceback.format_exc())
-        lock.release()
+        with locker.lock:
+            _store_data(stderr_file, traceback.format_exc())
         log.log(group=GRP_ERR, message=MSG_EXCEPTION_EXPERIMENT(i))
     if status == 'finished':
         log.log(MSG_FINISH_EXPERIMENT(i, runtime))   
     os.chdir(directory)
-    lock.acquire()
-    store_result(output)
-    lock.release()
+    with locker.lock:
+        store_result(output)
     del output
     gc.collect()
     if analyze:
         log.log(message=MSG_ANALYSIS_START)
-        analyze_lock.acquire()
-        try:
-            globals()['analyze'](func=analyze, path=directory, log=log)
-            log.log(message=MSG_ANALYSIS_DONE)
-        except:
-            _store_data(stderr_file, traceback.format_exc())
-            log.log(group=GRP_ERR, message=MSG_EXCEPTION_ANALYSIS)
-        analyze_lock.release()
-    return (i, runtime, status, memory)
+        with locker.analyze_lock:
+            try:
+                globals()['analyze'](func=analyze, path=directory, log=log)
+                log.log(message=MSG_ANALYSIS_DONE)
+            except:
+                _store_data(stderr_file, traceback.format_exc())
+                log.log(group=GRP_ERR, message=MSG_EXCEPTION_ANALYSIS)
+    return (i, runtime, status, memory,seed)
 
 def _store_data(file_name, data):
         if data:
@@ -473,8 +514,8 @@ def load(search_pattern='*', path='', ID=None,no_results=False, need_unique=True
     Return (generator of) tuple (info,results,directory) with the contents of 
     info.pkl and results.pkl as well as the directory of the experiment series
     
-    :param search_pattern: Bash style search_pattern string(s) 
-    :type search_pattern: String, e.g. search_pattern='algo*'
+    :param search_pattern: Shell-style glob/search pattern using wildcards  
+    :type search_pattern: String, e.g. search_pattern='foo*' matches `foobar`
     :param path: Path of exact location is known (possibly only partially), relative or absolute
     :type path: String, e.g. '/home/work/2017/6/<name>' or 'work/2017/6'
     :param no_results: Only load information about experiment series, not results
@@ -522,11 +563,6 @@ def load(search_pattern='*', path='', ID=None,no_results=False, need_unique=True
     series.extend(files.find_directories(search_pattern, path=path))
     series.extend(files.find_directories('*/' + search_pattern, path=path))
     series = [serie for serie in series if _is_experiment_directory(serie)]
-    if ID:
-        if len(ID)<8:
-            ID=ID+'.\{'+str(8-len(ID))+'\}'
-        series=[serie for serie in series if regexp.match(get_output(serie,True)[0]['ID'])]
-    series = unique(series)
     def get_output(serie,no_results):
         info_file_name = os.path.join(serie, 'info.pkl')
         info = assemble_file_contents(info_file_name, dict, need_start=True, update=True)
@@ -536,6 +572,12 @@ def load(search_pattern='*', path='', ID=None,no_results=False, need_unique=True
             results_file_name = os.path.join(serie, 'results.pkl')
             results = assemble_file_contents(results_file_name, list, need_start=False)
             return (info, results, serie)
+    if ID:
+        if len(ID)<LEN_ID:
+            ID=ID+'.{'+str(LEN_ID-len(ID))+'}'
+        regexp=re.compile(ID)
+        series=[serie for serie in series if regexp.match(get_output(serie,True)[0]['ID'])]
+    series = unique(series)
     if not need_unique:
         return (get_output(serie,no_results=no_results) for serie in series)
     else:
@@ -564,7 +606,7 @@ def _get_directory(name, path, no_date):
     if os.path.exists(directory) and os.listdir(directory):
         if _is_experiment_directory(directory):  # Previous series will be moved in sub v0, new series will be in sub v1
             split_path = os.path.split(directory)
-            temp_rel = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(8))
+            temp_rel = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(LEN_TMP))
             temp_directory = os.path.join(split_path[0], '.tmp', temp_rel)
             shutil.move(directory, temp_directory)
             shutil.move(temp_directory, os.path.join(directory, 'v0'))
@@ -584,11 +626,11 @@ def _get_directory(name, path, no_date):
     return directory
 
 def _git_command(string,add_input=True):
-        string='git '+string
-        output='$ '+string+'\n' if add_input else ''
-        args=shlex.split(string)
-        output+=subprocess.check_output(args,stderr=subprocess.STDOUT)
-        return output
+    string='git '+string
+    output='$ '+string+'\n' if add_input else ''
+    args=shlex.split(string)
+    output+=subprocess.check_output(args,stderr=subprocess.STDOUT)
+    return output
 def _git_id():
     return _git_command('log --format="%H" -n 1',add_input=False).rstrip()
 
@@ -682,6 +724,8 @@ if __name__ == '__main__':
         The following files and directories are created:
             *info.pkl:
                 *name: Name of experiment series (str)
+                *ID: Alphanumeric 8 character string identifying the experiment series
+                *modules: Module versions
                 *time: Time of execution (datetime.datetime)
                 *experiments: Input `experiments`
                 *runtime: Runtime of each experiment (list of floats)
@@ -731,7 +775,7 @@ if __name__ == '__main__':
         In both cases above, the specified class is instantiated
          and all experiments are performed by calling this instance.
         ''')
-    parser.add_argument('-e', '--experiments', action='store',
+    parser.add_argument('-e', '--experiments', action='store', default='None',
         help=
         '''
         List of experiment configurations.
@@ -742,9 +786,8 @@ if __name__ == '__main__':
         
         If FUNC is a bash command string, the entires of experiments must be 
         strings and are used to format FUNC (using str.format)
-        ''',
-        default='None')
-    parser.add_argument('-b', '--base', action='store',
+        ''')
+    parser.add_argument('-b', '--base', action='store', default='{}',
         help=
         '''
         Base configuration (in form of a dictionary) for all experiments. 
@@ -757,10 +800,8 @@ if __name__ == '__main__':
         
         If argument FUNC is a bash command string, the entries of this dictionary 
         are passed as keyword arguments along the experiment to format the string.
-        ''',
-        default='{}')
-    parser.add_argument('-n', '--name', action='store',
-        default=None,
+        ''')
+    parser.add_argument('-n', '--name', action='store', default=None,
         help=
         '''
         Name of the experiment series. 
@@ -784,12 +825,11 @@ if __name__ == '__main__':
         
         2) a name of a method of the class specified by FUNC
         ''')
-    parser.add_argument('-o', '--output', action='store',
+    parser.add_argument('-o', '--output', action='store', default='labbook',
         help=
         '''
         Specify output directory
-        ''',
-        default='experiments')
+        ''')
     parser.add_argument('-p', '--parallel', action='store_true',
         help=
         '''
@@ -830,67 +870,82 @@ if __name__ == '__main__':
         This is only needed, when FUNC looks like a Python module, e.g.:
         FUNC=`foo.bar`
         ''')
+    parser.add_argument('-l','--load',action='store_true',
+        help=
+        '''
+        Print information of previous entry. 
+        
+        In this case, FUNC must be the path to a previous entry. 
+        Shell-style wildcards, e.g. 'foo*', are recognized
+        ''')
     args, unknowns = parser.parse_known_args()
-    args.experiments = eval(args.experiments)
-    init_dict = eval(args.base)
-    module_name = args.func
-    regexp = re.compile('(\w+\.)+(\w+)')
-    args.external=args.external or regexp.match(module_name)
-    if args.external:
-        try:
-            module = importlib.import_module(module_name)
-        except ImportError:
-            real_module_name = '.'.join(module_name.split('.')[:-1])
-            module = importlib.import_module(real_module_name)
-        try:  # Suppose class is last part of given module argument
-            class_or_function_name = module_name.split('.')[-1]
-            cl_or_fn = getattr(module, class_or_function_name)
-        except AttributeError:  # Or maybe last part but capitalized?
-            class_or_function_name = class_or_function_name.title()
-            cl_or_fn = getattr(module, class_or_function_name)
-        if args.name == '_':
-            args.name = class_or_function_name
-        if inspect.isclass(cl_or_fn):
-            fn = cl_or_fn(**init_dict)
-        else:
-            if init_dict:
-                def fn(*experiment):  # Need to pass experiment as list, to be able to handle zero-argument calls
-                    return cl_or_fn(*experiment, **init_dict)
-            else:
-                fn = cl_or_fn
-        if args.analyze:
+    if args.load:
+        entries=load(search_pattern=args.func,no_results=True, need_unique=False)
+        entries=list(entries)
+        print('Found {} entr{}'.format(len(entries),'y' if len(entries)==1 else 'ies'))
+        for entry in entries:
+            print('='*80)
+            print('Entry \'{}\' at {}:'.format(entry[0]['name'],entry[1]))
+            print('='*80)
+            print(json.dumps(entry[0],sort_keys=True, indent=4,default=lambda ob: str(ob))[1:-1])
+    else:
+        args.experiments = eval(args.experiments)
+        init_dict = eval(args.base)
+        module_name = args.func
+        regexp = re.compile('(\w+\.)+(\w+)')
+        args.external=args.external or not regexp.match(module_name)
+        if not args.external:
             try:
-                split_analyze = args.analyze.split('.')
+                module = importlib.import_module(module_name)
+            except ImportError:
+                real_module_name = '.'.join(module_name.split('.')[:-1])
+                module = importlib.import_module(real_module_name)
+            try:  # Suppose class is last part of given module argument
+                class_or_function_name = module_name.split('.')[-1]
+                cl_or_fn = getattr(module, class_or_function_name)
+            except AttributeError:  # Or maybe last part but capitalized?
+                class_or_function_name = class_or_function_name.title()
+                cl_or_fn = getattr(module, class_or_function_name)
+            if args.name == '_':
+                args.name = class_or_function_name
+            if inspect.isclass(cl_or_fn):
+                fn = cl_or_fn(**init_dict)
+            else:
+                if init_dict:
+                    def fn(*experiment):  # Need to pass experiment as list, to be able to handle zero-argument calls
+                        return cl_or_fn(*experiment, **init_dict)
+                else:
+                    fn = cl_or_fn
+            if args.analyze:
                 try:
-                    if len(split_analyze) > 1:  # Analyze function in different module
-                        analyze_module = importlib.import_module('.'.join(split_analyze[:-1]))  
-                    else:
-                        analyze_module = module
-                    analyze_fn = getattr(analyze_module, split_analyze[-1])
-                except AttributeError:  # is analyze maybe a function of class instance?
-                    analyze_fn = getattr(fn, args.analyze)
-            except: 
+                    split_analyze = args.analyze.split('.')
+                    try:
+                        if len(split_analyze) > 1:  # Analyze function in different module
+                            analyze_module = importlib.import_module('.'.join(split_analyze[:-1]))  
+                        else:
+                            analyze_module = module
+                        analyze_fn = getattr(analyze_module, split_analyze[-1])
+                    except AttributeError:  # is analyze maybe a function of class instance?
+                        analyze_fn = getattr(fn, args.analyze)
+                except: 
+                    analyze_fn = None
+                    traceback.format_exc()
+                    warnings.warn(MSG_ERROR_LOAD('function {}'.format(args.analyze)))   
+            else:
                 analyze_fn = None
-                traceback.format_exc()
-                warnings.warn(MSG_ERROR_LOAD('function {}'.format(args.analyze)))   
-        else:
+            module_path = os.path.dirname(module.__file__)
+        else:#Assume the module describes an external call
+            module_name.format('{}',**init_dict)
+            fn=module_name
+            if args.analyze:
+                raise ValueError(MSG_ERROR_BASH_ANALYSIS)
             analyze_fn = None
-        module_path = os.path.dirname(module.__file__)
-    else:#Assume the module describes an external call
-        def fn(*experiment):
-            out = subprocess.check_output(module_name.format(*experiment, **init_dict), shell=True, stderr=subprocess.STDOUT)
-            sys.stdout.write(out)
-        if args.analyze:
-            raise ValueError(MSG_ERROR_BASH_ANALYSIS)
-        analyze_fn = None
-        if not args.name:
-            regexp = re.compile('\w+')
-            args.name = regexp.match(module_name).group(0)
-        module_path = os.getcwd()
-    conduct(func=fn, path=args.output,
+            module_path = os.getcwd()
+        conduct(
+            func=fn, path=args.output,
             experiments=args.experiments,
             name=args.name,
-            supp_data=MSG_CMD_ARG.format('" "'.join(sys.argv)),
+            external=args.external,
             analyze=analyze_fn,
             runtime_profile=args.runtime_profile,
             memory_profile=args.memory_profile,
@@ -898,5 +953,5 @@ if __name__ == '__main__':
             no_date=args.no_date,
             no_dill=args.no_dill,
             parallel=args.parallel,
-            module_path=module_path,
-            external=args.external)
+            module_path=module_path
+        )
