@@ -310,7 +310,7 @@ def analyze(func,search_pattern='*',path='',need_unique=False,log=None,no_dill=F
         if data:
             with open(file_name, 'w') as fp:
                 fp.write(data)
-    for (info,results,directory) in load(search_pattern=search_pattern,path=path,need_unique=need_unique,info_only=False):
+    for (info,results,directory) in load(search_pattern=search_pattern,path=path,need_unique=need_unique,no_results=False):
         analysis_directory = os.path.join(directory, 'analysis')
         shutil.rmtree(analysis_directory, ignore_errors=True)
         os.mkdir(analysis_directory)
@@ -346,7 +346,7 @@ def analyze(func,search_pattern='*',path='',need_unique=False,log=None,no_dill=F
                         warnings.warn(message=MSG_STORE_ANALYSIS)
         os.chdir(directory)          
 
-def load(search_pattern='*', path='', info_only=False, need_unique=True):
+def load(search_pattern='*', path='', no_results=False, need_unique=True):
     '''
     Load results of (possibly multiple) experiment series. 
     
@@ -357,8 +357,8 @@ def load(search_pattern='*', path='', info_only=False, need_unique=True):
     :type search_pattern: String, e.g. search_pattern='algo*'
     :param path: Path of exact location is known (possibly only partially), relative or absolute
     :type path: String, e.g. '/home/work/2017/6/<name>' or 'work/2017/6'
-    :param info_only: Only load information about experiment series, not results
-    :type info_only: Boolean
+    :param no_results: Only load information about experiment series, not results
+    :type no_results: Boolean
     :param need_unique: Require unique identification of experiment series.
     :type need_unique: Boolean
     :return: Information about run(s) and list(s) of results
@@ -400,7 +400,7 @@ def load(search_pattern='*', path='', info_only=False, need_unique=True):
     def get_output(serie):
         info_file_name = os.path.join(serie, 'info.pkl')
         info = assemble_file_contents(info_file_name, dict, need_start=True, update=True)
-        if not info_only:
+        if not no_results:
             results_file_name = os.path.join(serie, 'results.pkl')
             results = assemble_file_contents(results_file_name, list, need_start=False)
             return (info, results,serie)

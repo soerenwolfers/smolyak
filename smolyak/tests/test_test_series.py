@@ -1,8 +1,8 @@
 '''
-Test smolyak.experiments
+Test smolyak.labbook
 '''
 import unittest
-from smolyak.experiments import conduct,load
+from smolyak.labbook import conduct,load
 import numpy as np
 class TestTestSeries(unittest.TestCase):
     def test(self):

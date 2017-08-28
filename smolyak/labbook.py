@@ -63,7 +63,7 @@ GRP_ERR = 'Error'
 #TODO: Use from pathos.multiprocessing import ProcessingPool as Pool
 def conduct(func, experiments=None, name=None, path='experiments', supp_data=None,
             analyze=None, runtime_profile=False, memory_profile=False,
-            git=False, no_date=False, no_dill=False, parallel=False, module_path=None):
+            git=False, no_date=False, no_dill=False, parallel=False, module_path=None,external=False):
     '''   
     Call :code:`func` once for each entry of :code:`experiments` and store
     results along with auxiliary information such as runtime and memory usage.
@@ -139,6 +139,7 @@ def conduct(func, experiments=None, name=None, path='experiments', supp_data=Non
     :param module_path: Specify location of module of func. This is used for 
     the creation of a git snapshot. If not specified, this is determined automatically
     :type module_path: String
+    :param external: Using this flag turns of the storage of module versions
     '''
     if not name:
         try: 
@@ -186,7 +187,8 @@ def conduct(func, experiments=None, name=None, path='experiments', supp_data=Non
     info['name'] = name
     info['ID'] = ID
     info['time'] = datetime.datetime.fromtimestamp(time.time())
-    info['modules'] = _get_module_versions()
+    if not external:
+        info['modules'] = _get_module_versions()
     info['system'] = _get_system_info()
     if supp_data:
         info['supp_data'] = supp_data
@@ -206,16 +208,17 @@ def conduct(func, experiments=None, name=None, path='experiments', supp_data=Non
         log.log(group=GRP_WARN, message=MSG_SOURCE)
     if git:
         try:
-            #with capture_output() as c:
-            snapshot_id, git_log,_ = _git_snapshot(message=STR_COMMIT.format(ID,directory), path=module_path)
+            with capture_output() as c:
+                snapshot_id, git_log,_ = _git_snapshot(message=STR_COMMIT.format(ID,directory), path=module_path)
             _store_data(git_file, STR_GIT_LOG.format(snapshot_id, git_log))
             #if directory.startswith(os.path.abspath(git_directory)+os.sep):
             #log.log(group=GRP_WARN,message=MSG_WITHIN_GIT)
             log.log(message=MSG_GIT_DONE.format(snapshot_id, git_file))
         except GitError as e:
-            _store_data(stderr_file, c.stderr + str(e.message))
+            _store_data(stderr_file, c.stderr + str('Problem with git snapshot. Check stash. '+e.message))
             _store_data(git_file, e.git_log)
-            log.log(group=GRP_WARN, message=MSG_ERROR_GIT)
+            log.log(group=GRP_ERR, message=MSG_ERROR_GIT)
+            raise
     info_list = [info, {'experiments':experiments}]
     if not no_dill:
         try: 
@@ -603,7 +606,7 @@ def _git_snapshot(path, message=''):
         out=''
         tmp=_git_command('stash -u',add_input=False)
         out+='$ git stash -u \n'+tmp
-        stash= (tmp.count('\n')>1)
+        stash,keep_stash= (tmp.count('\n')>1),False
         #if stash:
             #try:
             #    out+=_git_command('checkout stash@{0} -- .gitignore')#These lines are necessary to clean
@@ -629,22 +632,32 @@ def _git_snapshot(path, message=''):
             try:
                 out += _git_command('stash apply --index')
             except subprocess.CalledProcessError as e:
-                pass
+                out += e.output
+                try:
+                    out += _git_command('stash apply --index')#On second try, there is even more files that prevent the `stash apply`. To get these ...
+                except subprocess.CalledProcessError as e:#...this exception is used
+                    out += e.output
+                    lines=e.output.splitlines()
+                    for line in lines[:-2]:
+                        out+=_git_command(['rm',line.split(' ')[0]])     
+                    out += _git_command('stash apply --index')#After removal of all preventing files, this should now work      
         out+=_git_command('add --all')
         out+=_git_command('commit --allow-empty --amend -C HEAD')
         id = _git_id() # @ReservedAssignment
         out+=_git_command('checkout {}'.format(active_branch))
         if stash:
-            drop=True
             try:
                 out += _git_command('stash apply --index')
             except subprocess.CalledProcessError as e:
-                drop=False
-            if drop:
+                out+=e.output
+                keep_stash=True
+            if not keep_stash:
                 out += _git_command('stash drop')
-    except:
-        raise GitError(traceback.format_exc(), out)
-    if not drop:
+    except subprocess.CalledProcessError as e:
+        raise GitError(traceback.format_exc(), out+'\n'+e.output)
+    except: 
+        raise GitError(traceback.format_exc(),out)
+    if keep_stash:
         raise GitError('Your previous working tree is stashed, but could not be reapplied.',out)
     os.chdir(initial_directory)
     return id, out, git_directory
@@ -810,12 +823,20 @@ if __name__ == '__main__':
         Do not use dill to store info.pkl and results.pkl. This 
         is probably a bad idea. 
         ''')
+    parser.add_argument('--external',action='store_true',
+        help=
+        '''
+        Assume that FUNC describes an external call. 
+        This is only needed, when FUNC looks like a Python module, e.g.:
+        FUNC=`foo.bar`
+        ''')
     args, unknowns = parser.parse_known_args()
     args.experiments = eval(args.experiments)
     init_dict = eval(args.base)
     module_name = args.func
     regexp = re.compile('(\w+\.)+(\w+)')
-    if regexp.match(module_name):
+    args.external=args.external or regexp.match(module_name)
+    if args.external:
         try:
             module = importlib.import_module(module_name)
         except ImportError:
@@ -855,7 +876,7 @@ if __name__ == '__main__':
         else:
             analyze_fn = None
         module_path = os.path.dirname(module.__file__)
-    else:
+    else:#Assume the module describes an external call
         def fn(*experiment):
             out = subprocess.check_output(module_name.format(*experiment, **init_dict), shell=True, stderr=subprocess.STDOUT)
             sys.stdout.write(out)
@@ -877,4 +898,5 @@ if __name__ == '__main__':
             no_date=args.no_date,
             no_dill=args.no_dill,
             parallel=args.parallel,
-            module_path=module_path)
+            module_path=module_path,
+            external=args.external)

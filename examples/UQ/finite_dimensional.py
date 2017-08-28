@@ -3,7 +3,7 @@ from smolyak.applications.pde.poisson import poisson_kink
 from smolyak.approximator import Approximator, Decomposition
 from smolyak.aux import plots
 from matplotlib2tikz import save as tikz_save
-from smolyak import experiments
+from smolyak import labbook
 import pickle
 from smolyak.applications.polynomials.mi_weighted_polynomial_approximator import MIWeightedPolynomialApproximator
 from smolyak.applications.polynomials.probability_spaces import TensorProbabilitySpace,\
@@ -54,8 +54,8 @@ if __name__ == '__main__':
     tests=[
         {'step':7} for l in range(9)
     ]
-    path=experiments.conduct(name='rsa_kink_d{}'.format(opts['c_dim_par']), tests=tests, func=rsa.run_test, overwrite=True,supp_data=opts)
-    info,results=experiments.load(path=path)
+    path=labbook.conduct(name='rsa_kink_d{}'.format(opts['c_dim_par']), tests=tests, func=rsa.run_test, overwrite=True,supp_data=opts)
+    info,results=labbook.load(path=path)
     os.chdir(path)
     rsa.analyze(results,info)
     #demonstrate(numerical_algorithm=sparse_response_surface_approximation_factory),
