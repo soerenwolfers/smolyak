@@ -8,5 +8,5 @@ setup(name='smolyak',
       author='Soeren Wolfers',
       author_email='soeren.wolfers@gmail.com',
       packages=find_packages(exclude=['*tests']),#,'examples*']),
-      install_requires=['numpy','scipy']
-     )
+      install_requires=['numpy','scipy','swutil']
+)

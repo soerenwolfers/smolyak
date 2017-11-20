@@ -4,33 +4,36 @@ Sparse approximation using Smolyak's algorithm
 from __future__ import division
 import numpy as np
 import timeit
-from smolyak.indices import  MultiIndexDict, get_admissible_indices, DCSet,\
+from smolyak.indices import  MultiIndexDict, get_admissible_indices, DCSet, \
     kronecker
 import copy
 import warnings
 import math
-from smolyak.aux.plots import plot_indices
+from swutil.plots import plot_indices
 from smolyak import indices
-from smolyak.aux.logs import Log
-from smolyak.aux.decorators import log_calls
-from smolyak.aux.more_collections import DefaultDict
-from smolyak.aux.np_tools import weighted_median
+from swutil.logs import Log
+from swutil.decorators import log_calls
+from swutil.collections import DefaultDict
 from operator import mul
 import functools
 from numpy import Inf
-
-
+from swutil.validation import validate_args, In, NotPassed
+#TODO: Add `work_type` parameter `expand_adaptive`, keep track of both in _AdaptiveData
+#TODO: Think about merging AdaptiveData and MetaData 
+#TODO: Rename Approximator->SparseApproximation.  
+#TODO: Put online
 class Approximator(object):
     r'''
-    Computes sparse approximation based on multi-index decomposition.
-    
-    Given a decomposition,
+    #######################################################
+    Sparse approximation based on multi-index decomposition
+    #######################################################
+    Given a decomposition, 
     
     .. math::
     
         f_{\infty}=\sum_{\mathbf{k}\in\mathbb{N}^{n}} (\Delta f)(\mathbf{k}),
     
-    this class computes approximations of the form
+    this class computes and stores approximations of the form
     
     .. math:: 
     
@@ -39,9 +42,10 @@ class Approximator(object):
     where :math:`\mathcal{I}` is an efficiently chosen finite multi-index set. 
 
     Currently supported choices for the construction of :math:`\mathcal{I}` are 
-     :code:`expand_adaptive`, :code:`expand_nonadaptive` and :code:`continuation`
+     :code:`update_approximation`, :code:`expand_adaptive`, :code:`expand_nonadaptive` and :code:`continuation`
     '''
-    def __init__(self, decomposition, work_type='runtime', log=None):
+    @validate_args()
+    def __init__(self, decomposition, work_type:In('runtime', 'work_model')='runtime', log=NotPassed):
         r'''        
         :param decomposition: Decomposition of an approximation problem
         :type decomposition: Decomposition
@@ -50,16 +54,12 @@ class Approximator(object):
         :param log: Log object used for logging
         '''
         self.decomposition = decomposition
-        self.md = _MetaData(self.decomposition)
-        self.ad = _AdaptiveData(self.decomposition)
-        self.app = _Approximation(self.decomposition)
-        self.work_type = work_type  # MOVE INTO ALGORITHMS?
+        self.reset()
+        self.work_type = work_type
         self.dry_run = not self.decomposition.is_external and not self.decomposition.func
-        #if self.work_type == 'runtime' and self.dry_run:
-        #    raise ValueError('Cannot compute runtime without doing computations.')
         if self.work_type == 'work_model':
             assert(self.decomposition.has_work_model) 
-        self.log = log or Log()   
+        self.log = log or Log(print_filter=False)   
             
     @log_calls   
     def continuation(self , L_max=None, T_max=None, L_min=2, work_exponents=None, contribution_exponents=None, find_work_exponents=False):
@@ -104,15 +104,16 @@ class Approximator(object):
         while l < L_max and timeit.default_timer() - tic_init < T_max:
             if self.decomposition.is_external:
                 self.decomposition.reset()
-            self.app = _Approximation(self.decomposition)
-            self.ad = _AdaptiveData(self.decomposition)
+            self.app = _Approximation(self.decomposition)#Why new?
+            self.ad = _AdaptiveData(self.decomposition)#Why new?
             tic = timeit.default_timer()
             rho = max([work_exponents[dim] / contribution_exponents[dim] for dim in range(self.decomposition.n)])
             mu = rho / (1 + rho)
-            guess = C * np.exp(mu * l)
-            def admissible(mi):  # Scale?
-                return sum([mi[dim] * (work_exponents[dim] + contribution_exponents[dim]) 
-                            for dim in range(self.decomposition.n)]) <= l  # #(all([dim<self.decomposition.n for dim in mi.active_dims()]) and
+            estimated_time = C * np.exp(mu * l)#only works with scaling in line below
+            scale = min(work_exponents[dim]+contribution_exponents[dim] for dim in range(self.decomposition.n))
+            def admissible(mi):
+                return sum([mi[dim]/scale * (work_exponents[dim] + contribution_exponents[dim]) 
+                            for dim in range(self.decomposition.n)]) <= l 
             mis = get_admissible_indices(admissible, self.decomposition.n)
             self.update_approximation(mis)
             if find_work_exponents:
@@ -125,8 +126,8 @@ class Approximator(object):
                                     if self.ad.contribution_estimator.ratios[dim] 
                                     else contribution_exponents[dim]
                                     for dim in range(self.decomposition.n)]
-            real = timeit.default_timer() - tic
-            C *= real / guess
+            observed_time = timeit.default_timer() - tic
+            C *= observed_time / estimated_time
             l += 1
         return work_exponents, contribution_exponents, mis
     
@@ -166,8 +167,8 @@ class Approximator(object):
         
         To decide on the multi-index to be added at each step, estimates of contributions and work are maintained. 
         These estimates are based on neighbors that are already in the set :math:`\mathcal{I}`,
-        unless they are specified in the arguments :code:`contribution_factors` and :code:`work_factors`.
-        If user specifies in the arguments :code:`have_work_factor` and :code:`have_contribution_factor` 
+        unless they are specified in :code:`contribution_factors` and :code:`work_factors`.
+        If user defines :code:`have_work_factor` and :code:`have_contribution_factor` 
         that only estimates for some of the :code:`n` involved parameters are available, 
         then the estimates from :code:`contribution_factor` and :code:`work_factor` for those parameters
         are combined with neighbor estimates for the remaining parameters.
@@ -187,31 +188,39 @@ class Approximator(object):
         if reset:
             ad_original = copy.deepcopy(self.ad)
         tic_init = timeit.default_timer()
-        step = 0
-        while step < c_steps:
+        for _ in range(c_steps):
             tic = timeit.default_timer()
-            mi_update = max(self.app.mis.candidates, key=lambda mi: self.ad.evaluator(mi))
             if self.decomposition.is_bundled:
-                self._expand_by_mi_or_bundle(indices.get_bundle(mi_update, self.app.mis, self.decomposition.is_bundled) + [mi_update])
+                mi_to_bundle = lambda mi: indices.get_bundle(mi, self.app.mis, self.decomposition.is_bundled) + [mi]
+            else:
+                mi_to_bundle = lambda mi: mi
+            mi_update = max(self.app.mis.candidates, key=lambda mi: self.ad.evaluator(mi, mi_to_bundle(mi)))
+            if self.decomposition.is_bundled:
+                self._expand_by_mi_or_bundle(mi_to_bundle(mi_update))
             else:
                 self._expand_by_mi_or_bundle(mi_update)
             if self.md.runtimes[mi_update] < (timeit.default_timer() - tic) / 2.:
                 warnings.warn('Large overhead. Reparametrize decomposition?')
             if (timeit.default_timer() - tic_init > T_max or (timeit.default_timer() - tic_init > T_max / 2. and reset)):
-                c_steps = step
-            step += 1
+                break
         if reset:
-            tic_init = timeit.default_timer()
-            ad_final = copy.deepcopy(self.ad)
+            #tic_init = timeit.default_timer()
+            #ad_final = copy.deepcopy(self.ad)
             mis = self.get_indices()
             self.decomposition.reset()
             self.ad = ad_original
             self.app = _Approximation(self.decomposition)
             self.md = _MetaData(self.decomposition)
             self.update_approximation(mis)
-            self.ad = ad_final
-        return timeit.default_timer() - tic_init
-    
+            #self.ad = ad_final
+        #return timeit.default_timer() - tic_init
+        
+    def reset(self):
+        self.decomposition.reset()
+        self.ad = _AdaptiveData(self.decomposition)
+        self.app = _Approximation(self.decomposition)
+        self.md = _MetaData(self.decomposition)
+        
     @log_calls    
     def update_approximation(self, mis):
         '''
@@ -251,7 +260,7 @@ class Approximator(object):
     def get_indices(self):
         return copy.deepcopy(self.app.mis.mis)
     
-    def plot_indices(self, dims=None, weighted=False, percentiles=1):
+    def plot_indices(self, dims=None, weighted=False, percentiles=4):
         '''
         :param dims: Dimensions that should be used for plotting
         :type dims: List of integers, length at most 3
@@ -283,7 +292,7 @@ class Approximator(object):
     @log_calls
     def _expand_by_mi_or_bundle(self, mi_or_bundle):
         '''
-        Expands approximatoin by given multi-index or multi-index-bundle.
+        Expands approximation by given multi-index or multi-index-bundle.
         
         :param mi_or_bundle: Single multi-index or single multi-index-bundle
         :return: Time required to compute decomposition term(s) if not self.dry_run
@@ -301,7 +310,7 @@ class Approximator(object):
         external_work_factor = self.decomposition.work_factor(mi_or_bundle)
         tic = timeit.default_timer()
         if self.decomposition.is_external:
-            output = self.decomposition.func(self.app.mis.mis)
+            output = self.decomposition.func(self.app.mis.mis) #Always provide full set, leave it to external to reuse computations or not
         else:
             output = self.decomposition.func(mi_or_bundle)
         runtime = timeit.default_timer() - tic
@@ -346,7 +355,7 @@ class Approximator(object):
             for mi in mis_update:
                 self.ad.contribution_estimator[mi] = contribution[mi] / self.decomposition.contribution_factor(mi)
                 self.md.contributions[mi] = contribution[mi]
-        except (KeyError,NameError): 
+        except (KeyError, NameError): 
             pass  # Contribution could not be determined, contribution was never created
         if math.isinf(self.decomposition.n):
             self.ad.find_new_dims(mis_update, self.app.mis)
@@ -356,7 +365,7 @@ class Decomposition():
     def __init__(self, func=None, n=None, init_dims=None, next_dims=None, is_bundled=None,
                  is_external=False, is_md=None, have_work_factor=None,
                  have_contribution_factor=None, work_factor=None, contribution_factor=None,
-                 has_work_model=False, has_contribution_model=False, kronecker_exponents=None,reset=None):
+                 has_work_model=False, has_contribution_model=False, kronecker_exponents=None, reset=None):
         r'''        
         :param func: Computes decomposition terms.
             In the most basic form, a single multi-index is passed to 
@@ -369,7 +378,7 @@ class Decomposition():
             This may be useful for parallelization, or for problems where joint
             computation of decomposition elements is analytically more efficient.
             
-            If :code:`is_external`, no output is required and decomposition terms
+            If :code:`is_external`, no n_results is required and decomposition terms
             are expected to be stored by :code:`func` itself. Each call 
             will contain the full multi-index set representing the current approximation.
             
@@ -428,6 +437,7 @@ class Decomposition():
         :param reset: If is_external, this function will reset the externally stored approximation
         :type reset: Function
         '''
+        ERR_WF_REQUIRED = ValueError('Need work factor for each bundled dimension')
         self.func = func
         self._set_n(n)
         self.has_work_model = has_work_model
@@ -440,12 +450,18 @@ class Decomposition():
             raise ValueError('Parameters init_dims and next_dims only valid for infinite-dimensional problems')
         else:
             self._set_init_dims(self.n)
+        if is_bundled is True and not work_factor:  # Would like to raise this error more often, but cannot check each single dimension
+            raise ERR_WF_REQUIRED
         self._set_is_bundled(is_bundled)
         self._set_is_md(is_md)
         self._process_work_factor(have_work_factor, work_factor, self.is_md)
         self._process_contribution_factor(have_contribution_factor, contribution_factor, self.is_md)
         self.kronecker_exponents = kronecker_exponents
-        self.reset=reset
+        self.reset = reset
+        if self.n < np.Inf:
+            if any(self.is_bundled(d) and not self.have_work_factor(d) for d in range(self.n)):
+                raise ERR_WF_REQUIRED
+
         
     def _process_work_factor(self, have_work_factor, work_factor, is_md):
         if have_work_factor is True or (have_work_factor is None and work_factor):
@@ -517,6 +533,8 @@ class Decomposition():
     def _set_is_bundled(self, bundled):
         if hasattr(bundled, '__contains__'):
             self.is_bundled = lambda dim: dim in bundled
+        elif bundled in [True, False]:
+            self.is_bundled = lambda dim: bundled
         else: 
             self.is_bundled = bundled
        
@@ -555,18 +573,18 @@ class _Estimator(object):
         self.exponent_max = exponent_max
         self.exponent_min = exponent_min
         self.FIT_WINDOW = np.Inf
-        self.active_dims=set()
+        self.active_dims = set()
         
-    def _base_estimate(self,mi):
+    def _base_estimate(self, mi):
         q_neighbors = []
         q_neighbors.append(self.quantities[mi])
         for dim in self.active_dims:
-            neighbor1=mi-kronecker(dim)
+            neighbor1 = mi - kronecker(dim)
             if neighbor1 in self.quantities:
-                q_neighbors.append(self.quantities[neighbor1]*np.exp(self.exponents[dim]))
-            neighbor2=mi+kronecker(dim)
+                q_neighbors.append(self.quantities[neighbor1] * np.exp(self.exponents[dim]))
+            neighbor2 = mi + kronecker(dim)
             if neighbor2 in self.quantities:
-                q_neighbors.append(self.quantities[neighbor2]*np.exp(-self.exponents[dim]))
+                q_neighbors.append(self.quantities[neighbor2] * np.exp(-self.exponents[dim]))
         return np.mean(q_neighbors)
         
     def set_fallback_exponent(self, dim, fallback_exponent):
@@ -598,11 +616,11 @@ class _Estimator(object):
         
     def _update_exponents(self):
         for dim in self.ratios:
-            ratios = self.ratios[dim]
+            ratios = np.array(self.ratios[dim])
             estimate = max(min(np.median(ratios), np.exp(self.exponent_max)), np.exp(self.exponent_min))
             c = len(ratios)
             self.exponents[dim] = (self.fallback_exponents[dim] + c * np.log(estimate)) / (c + 1.)
-            self.reliability[dim] = 1. / (1 + 1/math.sqrt(c)+np.median([np.abs(ratio - estimate) for ratio in ratios]) / estimate)
+            self.reliability[dim] = 1. / (1 + 1 / math.sqrt(c) + 10 * np.median(np.abs(ratios - estimate) / ratios))
             
     def __call__(self, mi):
         mi = mi.mod(self.dims_ignore)
@@ -614,10 +632,16 @@ class _Estimator(object):
                 w_neighbors = []
                 for dim in mi.active_dims():
                     neighbor = mi - kronecker(dim)
-                    q_neighbor = self._base_estimate(neighbor)*np.exp(self.exponents[dim])
+                    try:
+                        q_neighbor = self._base_estimate(neighbor) * np.exp(self.exponents[dim])
+                    except:
+                        raise KeyError('Could not access required contribution or work estimate. Were they specified?')
                     q_neighbors.append(q_neighbor)
                     w_neighbors.append(self.reliability[dim])
-                return sum([q*w for (q,w) in zip(q_neighbors, w_neighbors)])/sum(w_neighbors)
+                if sum(w_neighbors) > 0:
+                    return sum([q * w for (q, w) in zip(q_neighbors, w_neighbors)]) / sum(w_neighbors)
+                else:
+                    return np.nan
             else:
                 return 1
 
@@ -638,10 +662,10 @@ class _AdaptiveData(object):
                                               exponent_min=self.CONTRIBUTION_EXPONENT_MIN,
                                               init_exponents=self.decomposition.kronecker_exponents)
               
-    def evaluator(self, mi):
+    def evaluator(self, mi, bundle):
         contribution = self.contribution_estimator(mi) * self.decomposition.contribution_factor(mi)
         if self.decomposition.is_bundled:
-            work = self.work_estimator(mi) * self.decomposition.work_factor([mi])
+            work = self.work_estimator(mi) * self.decomposition.work_factor(bundle)
         else:
             work = self.work_estimator(mi) * self.decomposition.work_factor(mi)
         return contribution / work

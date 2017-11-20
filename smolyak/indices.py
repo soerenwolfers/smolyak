@@ -3,8 +3,8 @@ Sparse multi-indices
 '''
 import itertools
 import numpy as np
-from smolyak.aux.more_collections import unique
-from smolyak.aux.more_collections import DefaultDict
+from swutil.collections import unique
+from swutil.collections import DefaultDict
 
 class DCSet(object):
     '''
@@ -293,7 +293,7 @@ class MultiIndexDict(object):
     :param mod: Dimensions that are ignored
     :type mod: :math:`\mathbb{N}\to\{\text{True},\text{False}\}`
     :param initializer: Default values
-    :tzpe initializer: Function
+    :type initializer: Function
     '''
     def __init__(self, mod=None, initializer=None):
         self._dict = {}
@@ -340,7 +340,13 @@ def get_bundles(sparse_indices,is_bundled):
     '''
     Slice multi-index set into bundles
     '''
-    return unique([get_bundle(si,sparse_indices,is_bundled) for si in sparse_indices])
+    bundles=DefaultDict(lambda _: list())
+    not_bundled=lambda dim: not is_bundled(dim)
+    for si in sparse_indices:
+        representer=si.restrict(not_bundled)
+        bundles[representer]+=[si]
+    return bundles.values()
+
 
 def get_bundle(multi_index,multi_indices,is_bundled):
     '''
@@ -365,7 +371,7 @@ def get_admissible_indices(admissible, dim=-1):
     '''
     mis = []
     def next_admissible(admissible, mi, dim):
-        if admissible(mi + kronecker(0)):
+        if dim>0 and admissible(mi + kronecker(0)):
             return mi + kronecker(0)
         else:
             if dim == 1 or (dim < 1 and mi == MultiIndex()):
@@ -384,12 +390,12 @@ def get_admissible_indices(admissible, dim=-1):
 
 def rectangle(L=None, c_dim=None):
     if not hasattr(L, '__contains__'):
-        if not c_dim:
+        if c_dim is None:
             raise ValueError('Specify either list of rectangle sides or c_dim')
         else:
             L = [L] * c_dim
     else:
-        if c_dim:
+        if c_dim is not None:
             if c_dim != len(L):
                 raise ValueError('c_dim does not match length of L')
         else:
@@ -541,7 +547,8 @@ def combination_rule(mis, function=None):
         for down in cartesian_product([[0, 1]] * len(dims), dims):
             mi_neighbor = mi - down
             coefficients[mi_neighbor] = coefficients[mi_neighbor] + (-1) ** len(down.active_dims())
+    output={}
     for mi in coefficients.keys():
-        if abs(coefficients[mi]) < 0.1: 
-            coefficients.pop(mi)
-    return coefficients
+        if abs(coefficients[mi]) > 0.1: 
+            output[mi]=coefficients[mi]
+    return output
