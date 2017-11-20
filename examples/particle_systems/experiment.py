@@ -1,13 +1,12 @@
 import numpy as np
 from smolyak.indices import MixedDifferences, MultiIndex
 from smolyak.applications.particle_systems.optimal_control import iteration
-from smolyak.approximator import Decomposition, Approximator
-from smolyak import labbook
+from smolyak import Decomposition, Approximator
+import scilog
 import os
 import pickle      
-from smolyak.aux import plots
+from swutil import plots
 import matplotlib2tikz
-from sympy.physics.quantum.circuitplot import matplotlib
 from matplotlib.pyplot import savefig
 class Experiment(object):
     def __init__(self,**opts):
@@ -40,7 +39,7 @@ class Experiment(object):
         decomposition = Decomposition(func=MixedDifferences(f=lambda x,y:self.func(x,y,100,control)[0], zipped=False,c_var=2,reparametrization=True), n=2,is_md=True)
         SA = Approximator(decomposition=decomposition)
         SA.expand_adaptive(T_max=test['T_max'])
-        #SA.expand_nonadaptive(L=test['L'])
+        #SA.expand_nonadaptive(L=validate_args['L'])
         return SA
     
     def run_nonadaptive(self,test):
@@ -68,7 +67,7 @@ def analyze(results,info):
     ind=[i for i in range(len(info['status'])) if info['status'][i]=='finished']
     info['runtime']=[info['runtime'][i] for i in ind]
     results=[results[i] for i in ind]
-    order = plots.plot_convergence(info['runtime'], [np.array(A.get_approximation()) for A in results],expect_order=-1)
+    order = plots.plot_convergence(info['runtime'], [np.array(A.get_approximation()) for A in results],print_order=-1)
     print('Convergence order ({}): {}'.format(info['name'],order))
     plots.save('convergence')
     results[-1].plot_indices(weighted='contribution/runtime',percentiles=5)
@@ -79,9 +78,9 @@ if __name__ == '__main__':
     #Y=np.linspace(0.1,2,20)
     #rsa=ResponseSurfaceApproximation([X,Y])
     #tests=[(i,j) for i in X for j in Y]
-    #path=labbook.conduct(tests=tests,func=rsa.global_opt,overwrite=True,user_data=[X,Y])
+    #path=scilog.conduct(tests=tests,func=rsa.global_opt,overwrite=True,user_data=[X,Y])
     #path='2017/7/31/global_opt'
-    #info,results=labbook.load(path=path)
+    #info,results=scilog.load(path=path)
     #os.chdir(path)
     #rsa.analyze_global_opt(results,info)
     opts={
@@ -96,7 +95,15 @@ if __name__ == '__main__':
         {'T_max':2**l} for l in range(3)
     ]
     name='rand_opt_alpha{alpha}_rho{rho}_power{power}_d{d}'.format(**opts)
-    path=labbook.conduct(experiments=experiments, func=rsa.__call__, supp_data=opts,runtime_profile=True,memory_profile=False,git=True,parallel=False)
-    #path='labbook/2017/8/9/'+name
-    labbook.analyze(analyze, path=path, need_unique=True)
+    path=scilog.conduct(
+        experiments=experiments, 
+        func=rsa.__call__, 
+        supp_data=opts,
+        runtime_profile=True,
+        memory_profile=False,
+        git=True,
+        parallel=True
+    )
+    #path='scilog/2017/8/9/'+name
+    scilog.analyze(analyze, path=path, need_unique=True)
     

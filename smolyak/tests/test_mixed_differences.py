@@ -4,8 +4,8 @@ Test smolyak.sparse.mixed_differences
 import unittest
 from smolyak.indices import MixedDifferences
 from smolyak.indices import MultiIndex
-from smolyak.approximator import Approximator
-from smolyak.decomposition import Decomposition
+from smolyak import Approximator
+from smolyak import Decomposition
             
 class TestMixedDifferences(unittest.TestCase):
     def test1(self):

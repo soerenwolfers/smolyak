@@ -2,28 +2,28 @@
 Test smolyak.polreg.mi_weighted_polynomial_approximator
 '''
 import unittest
-from smolyak.approximator import Approximator
+from smolyak import Approximator
 import numpy as np
 from smolyak.applications.polynomials.mi_weighted_polynomial_approximator import MIWeightedPolynomialApproximator
-from smolyak.aux.time import snooze
+from swutil.time import snooze
 import cProfile
 import pstats
-from smolyak.approximator import Decomposition
+from smolyak import Decomposition
 
 class TestMIWeightedPolynomialApproximator(unittest.TestCase):
 
     def setUp(self):
-        """init each test"""
+        """init each validate_args"""
         self.pr = cProfile.Profile()
         self.pr.enable()
-        print "\n<<<---"
+        print("\n<<<---")
         
     def tearDown(self):
-        """finish any test"""
+        """finish any validate_args"""
         p = pstats.Stats(self.pr)
         p.strip_dirs()
         p.sort_stats('cumulative').print_stats(20)
-        print "\n--->>>"
+        print("\n--->>>")
 
     def foo(self, approximation_type):
         def function(X, mi): 

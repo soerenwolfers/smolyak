@@ -6,7 +6,7 @@ from __future__ import division
 import numpy as np
 import matplotlib.pyplot as plt
 import timeit
-from smolyak.aux import plots
+from swutil import plots
 from smolyak.applications.polynomials.mi_weighted_polynomial_approximator import MIWeightedPolynomialApproximator
 from smolyak.approximator import Approximator
 from smolyak.applications.pde.kl import kl
@@ -80,7 +80,7 @@ def kl_adaptive():
     X = np.random.rand(10000, dims)
     Zl = [A(X) for A in As]
     order = plots.plot_convergence(runtimes, [np.array(Z).reshape(-1, 1) for Z in Zl],
-                                    expect_order=-1)
+                                    print_order=-1)
     print('Adaptive: Fitted convergence order: {}'.format(order))
     print('Number of active dimensions: ', dims)
     tikz_save('kl2_adaptiveNEW.tex');

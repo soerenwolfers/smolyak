@@ -7,7 +7,7 @@ import timeit
 from smolyak.applications.polynomials.mi_weighted_polynomial_approximator import MIWeightedPolynomialApproximator
 from smolyak.approximator import Approximator
 from smolyak.applications.pde.poisson import poisson_kink
-from smolyak.aux import plots
+from swutil import plots
 from matplotlib2tikz import save as tikz_save
 import matplotlib.pyplot as plt
 from smolyak.indices import \

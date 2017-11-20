@@ -3,7 +3,7 @@ Test smolyak.pde.poisson
 '''
 import unittest
 from smolyak.applications.pde.poisson import poisson_kink
-from smolyak.aux.plots import plot_convergence
+from swutil.plots import plot_convergence
 import numpy as np
 import matplotlib.pyplot as plt
 import timeit
@@ -21,9 +21,9 @@ class TestPoisson(unittest.TestCase):
             V.append(v)
             runtimes.append(timeit.default_timer() - tic)  
             print(runtimes[-1])  
-        orderRuntime = plot_convergence(runtimes, grids, expect_limit=0, expect_order='fit')
-        orderConvergence = plot_convergence(runtimes, V, expect_order='fit')
-        orderConvergence2 = plot_convergence(grids, V, expect_order='fit')
+        orderRuntime = plot_convergence(runtimes, grids, reference=0, print_order='fit')
+        orderConvergence = plot_convergence(runtimes, V, print_order='fit')
+        orderConvergence2 = plot_convergence(grids, V, print_order='fit')
         plt.show()
         print('Fit', orderRuntime)
         print('Fit', orderConvergence)

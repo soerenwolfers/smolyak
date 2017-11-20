@@ -1,12 +1,12 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D  # @UnusedImport
-from smolyak.aux.np_tools import grid_evaluation
+from mpl_toolkits.mplot3d import Axes3D  # @UnusedImport @UnresolvedImport
+from swutil.np_tools import grid_evaluation
 import copy
-from smolyak.aux.more_collections import RFunction
+from swutil.collections import RFunction
 
 class PolynomialApproximation(object):
-    def __init__(self,ps=None,coefficients=None):
+    def __init__(self,ps,coefficients=None):
         '''
         
         :param ps: Polynomial subspace in which approximation lives
@@ -15,10 +15,19 @@ class PolynomialApproximation(object):
             :code:`ps`
         :type coefficients: Dictionary ps.basis->reals
         '''
-        if set(coefficients.keys()) != set(ps.basis):
-            raise ValueError('Coefficients do not match polynomial basis')
-        self.coefficients=RFunction(coefficients)
         self.ps = ps
+        self.set_coefficients(coefficients)
+        
+    def set_coefficients(self,coefficients):
+        if hasattr(coefficients,'keys'):
+            if set(coefficients.keys()) != set(self.ps.basis):
+                raise ValueError('Coefficients do not match polynomial basis')
+            self.coefficients=RFunction(coefficients)
+        elif coefficients:
+            t=dict()
+            for i,p in enumerate(self.ps.basis):
+                t[p]=coefficients[i]
+            self.coefficients=RFunction(t)
         
     def _sum_sq_coeff(self, pols=None):
         '''
@@ -27,7 +36,7 @@ class PolynomialApproximation(object):
         :param mi: Multi-index
         :return: Sum of squares of coefficients corresponding to mi
         '''
-        if not pols:
+        if pols is None:
             pols=self.ps.basis
         return sum([self.coefficients[pol] ** 2 for pol in pols])  
         
@@ -47,7 +56,7 @@ class PolynomialApproximation(object):
         :param mi: Multi-index
         :return: Norm of projection onto polynomial space described by mi
         '''
-        if not pols:
+        if pols is None:
             pols=self.ps.basis
         return np.sqrt(self._sum_sq_coeff(pols))
     

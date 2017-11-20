@@ -51,11 +51,11 @@ class TestSparseIndex(unittest.TestCase):
         self.assertEqual([a.full_tuple() for a in B], [(1, 2), (2, 3)])
         
     def test_rectangle(self):
-        self.assertItemsEqual(indices.rectangle(L=[4, 4], c_dim=2), [mi for mi in cartesian_product([range(4)] * 2)])
-        self.assertItemsEqual(indices.rectangle(L=2, c_dim=2), [MultiIndex(), MultiIndex((1, 0)), MultiIndex((0, 1)), MultiIndex((1, 1))])
+        self.assertCountEqual(indices.rectangle(L=[4, 4], c_dim=2), [mi for mi in cartesian_product([range(4)] * 2)])
+        self.assertCountEqual(indices.rectangle(L=2, c_dim=2), [MultiIndex(), MultiIndex((1, 0)), MultiIndex((0, 1)), MultiIndex((1, 1))])
     
     def test_simplex(self):
-        self.assertItemsEqual(indices.simplex(L=1, c_dim=2), [MultiIndex(), MultiIndex((1, 0)), MultiIndex((0, 1))])
+        self.assertCountEqual(indices.simplex(L=1, c_dim=2), [MultiIndex(), MultiIndex((1, 0)), MultiIndex((0, 1))])
         
     def test_cartesian_product(self):
         T = [[1, 2], [3, 4], [2]]

@@ -3,7 +3,7 @@ Test smolyak.pde.elliptic
 '''
 import unittest
 from smolyak.applications.pde.kl import kl
-from smolyak.aux.plots import plot_convergence
+from swutil.plots import plot_convergence
 import numpy as np
 import matplotlib.pyplot as plt
 import timeit
@@ -21,8 +21,8 @@ class TestKL(unittest.TestCase):
             V.append(v)
             runtimes.append(timeit.default_timer() - tic)    
             print(runtimes[-1])
-        orderRuntime = plot_convergence(runtimes[1:], grids[1:], expect_limit=0, expect_order='fit')
-        orderConvergence = plot_convergence(runtimes[2:], V[2:], expect_order='fit')
+        orderRuntime = plot_convergence(runtimes[1:], grids[1:], reference=0, print_order='fit')
+        orderConvergence = plot_convergence(runtimes[2:], V[2:], print_order='fit')
         # plt.show()
         self.assertAlmostEqual(orderRuntime / 0.5, 1, delta=0.25)
         self.assertAlmostEqual(orderConvergence / -1, 1, delta=0.25)
@@ -50,8 +50,8 @@ class TestKL(unittest.TestCase):
             V.append(v)
             runtimes.append(timeit.default_timer() - tic)    
             print(runtimes[-1])
-        orderRuntime = plot_convergence(runtimes[1:], grids[1:], expect_limit=0, expect_order='fit')
-        orderConvergence = plot_convergence(runtimes[2:], V[2:], expect_order='fit')
+        orderRuntime = plot_convergence(runtimes[1:], grids[1:], reference=0, print_order='fit')
+        orderConvergence = plot_convergence(runtimes[2:], V[2:], print_order='fit')
         print(orderRuntime, orderConvergence)
         plt.show()
         self.assertAlmostEqual(orderRuntime / 0.5, 1, delta=0.25)

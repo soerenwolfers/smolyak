@@ -2,29 +2,29 @@
 Test smolyak.approximator
 '''
 import unittest
-from smolyak.approximator import Approximator 
+from smolyak import Approximator 
 import numpy as np
 import cProfile
 import pstats
-from smolyak.decomposition import Decomposition
-from smolyak.aux.time import snooze
+from smolyak import Decomposition
+from swutil.time import snooze
 
 class TestApproximator(unittest.TestCase):
     
     def setUp(self):
-        """init each test"""
+        """init each validate_args"""
         self.pr = cProfile.Profile()
         self.pr.enable()
-        print "\n<<<---"
+        print("\n<<<---")
         
     def tearDown(self):
-        """finish any test"""
+        """finish any validate_args"""
         p = pstats.Stats(self.pr)
         p.strip_dirs()
         # p.sort_stats ('cumtime')
         # p.print_runtie ()
-        p.sort_stats('cumulative').print_runtie(20)
-        print "\n--->>>"
+        p.sort_stats('cumulative').print_stats(20)
+        print("\n--->>>")
     
     def test_dimensionadaptivity(self):
         ndim = 5
@@ -41,7 +41,7 @@ class TestApproximator(unittest.TestCase):
         bundled = [0, 1]
         def func(mis):
             value = sum([np.exp(-3 * mi[0]) * np.exp(-mi[1]) * np.exp(-mi[2]) for mi in mis])
-            return value + snooze(2 ** mi[0] * 2 ** mi[1] * 2 ** mi[2])
+            return value + snooze(sum([2 ** mi[0] * 2 ** mi[1] * 2 ** mi[2] for mi in mis]))
         decomp = Decomposition(func=func,n=3,is_bundled=bundled, work_factor=[np.log(2), np.log(2), np.log(2)], contribution_factor=[3, 1, 1])
         SA = Approximator(decomp)
         SA.expand_nonadaptive(L=15)

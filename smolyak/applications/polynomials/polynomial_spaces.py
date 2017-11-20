@@ -3,7 +3,7 @@ import numpy as np
 from smolyak.applications.polynomials.orthogonal_polynomials import evaluate_orthonormal_polynomials
 import warnings
 from scipy.linalg import solve
-from smolyak.aux.np_tools import grid_evaluation
+from swutil.np_tools import grid_evaluation
 import copy
 import matplotlib.pyplot as plt
 from matplotlib import cm
@@ -177,7 +177,7 @@ class TensorPolynomialSpace(PolynomialSpace):
         :param polynomials: Polynomials to be added
         '''
         self.basis += polynomials
-        max_var = max([max(pol.active_dims()) + 1 if pol.active_dims() else 1 for pol in self.basis])
+        max_var = max([max(pol.active_dims()) + 1 if pol.active_dims() else 0 for pol in self.basis])#else 0 or else 1?
         if max_var > self.get_c_var():
             for __ in range(max_var - self.get_c_var()):
                 self.probability_space.ups.append(copy.deepcopy(self.probability_space.ups[-1]))

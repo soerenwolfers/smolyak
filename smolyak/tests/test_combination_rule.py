@@ -13,13 +13,13 @@ class TestCombinationRule(unittest.TestCase):
     def setUp(self):
         self.pr = cProfile.Profile()
         self.pr.enable()
-        print "\n<<<---"
+        print("\n<<<---")
         
     def tearDown(self):
         p = pstats.Stats(self.pr)
         p.strip_dirs()
         p.sort_stats('cumulative').print_stats(20)
-        print "\n--->>>"
+        print("\n--->>>")
         
     def test_simplices(self):
         d = 2

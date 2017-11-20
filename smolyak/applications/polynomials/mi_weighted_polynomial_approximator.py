@@ -3,8 +3,8 @@ Multi-index weighted polynomial approximation
 '''
 from smolyak.applications.polynomials.weighted_polynomial_approximator import WeightedPolynomialApproximator
 from smolyak.indices import MixedDifferences
-from smolyak.aux.v_function import VFunction
-from smolyak.aux.more_collections import DefaultDict
+from swutil.v_function import VFunction
+from swutil.collections import DefaultDict
 import copy
 from smolyak import indices
 from smolyak.indices import MultiIndex, cartesian_product
@@ -74,17 +74,18 @@ class MIWeightedPolynomialApproximator(object):
         
         :param mis: Multi-indices 
         :return: work and contribution associated to mis
-        :rtype: (work,contribution) where work is real number and contribution is list of same length as mis  
+        :rtype: (work,contribution) where work is real number and contribution is dictionary mis>reals
         '''
         bundles=indices.get_bundles(mis, self.is_bundled)
         work = 0
         contributions=dict()
         for bundle in bundles:
             mis_pols,mi_acc= self.__handle_mis(bundle)
-            work += self.WPAs[mi_acc].update_approximation(self._pols_from_mis(mis_pols))
-            if work>0:
-                pa = self.WPAs[mi_acc].get_approximation()
-                contributions.update({mi_acc+mi.shifted(self.c_dim_acc): pa.norm(self._pols_from_mi(mi)) for mi in mis_pols})
+            (new_work,_) = self.WPAs[mi_acc].update_approximation(self._pols_from_mis(mis_pols))
+            work+=new_work
+            #if work>0:
+            pa = self.WPAs[mi_acc].get_approximation()
+            contributions.update({mi_acc+mi.shifted(self.c_dim_acc): pa.norm(self._pols_from_mi(mi)) for mi in mis_pols})
         return work, contributions
     
     def reset(self):

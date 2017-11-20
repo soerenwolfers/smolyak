@@ -10,7 +10,7 @@ def arcsine_samples(probability_space,N):
         return (X,D)
     X = np.zeros((N, probability_space.get_c_var()))
     D = np.ones((N, 1))
-    for dim in X.shape[1]:
+    for dim in range(X.shape[1]):
         (X_temp, D_temp) = univariate_arcsine_samples(N,probability_space.ups[dim].interval)
         X[:, [dim]] = X_temp
         D *= D_temp

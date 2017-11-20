@@ -23,8 +23,6 @@ class WeightedPolynomialApproximator(object):
             if sampler == 'optimal':
                 self.keep = False
             elif sampler == 'arcsine':
-                if self.measure in ['h']:
-                    raise ValueError('Cannot use arcsine samples for Hermite polynomials')
                 self.keep = True
             elif sampler == 'MCMC':
                 self.keep = False
@@ -60,6 +58,7 @@ class WeightedPolynomialApproximator(object):
         Get near-optimal projection onto subspace described by mis
         
         :param mis: List of multi-indices describing polynomial span to be added
+        :return: Time to compute new samples
         '''
         c_samples = self.estimated_work(pols)
         if c_samples > 0:
@@ -70,21 +69,30 @@ class WeightedPolynomialApproximator(object):
                     self.X = np.zeros((0, self.ps.get_c_var()))
                     self.Y = np.zeros((0, 1))
                     self.W = np.zeros((0, 1))
-                (Xnew,Wnew) = samples.importance_samples(self.ps, c_samples, 'arcsine')
+                (Xnew,Wnew) = samples.importance_samples(self.ps.probability_space, c_samples, 'arcsine')
                 self.X = np.concatenate((self.X, Xnew), axis=0)  
                 self.W = np.concatenate([self.W, Wnew])  
                 tic = timeit.default_timer()
-                self.Y = np.concatenate([self.Y, self.function(Xnew).reshape(-1, 1)])
+                Y_new=self.function(Xnew).reshape(-1,1)
+                if not Y_new.shape[0]==Xnew.shape[0]:
+                    raise ValueError('Function must return as many outputs values as it is given inputs')
+                self.Y = np.concatenate([self.Y, Y_new])
                 work_model = timeit.default_timer() - tic
             else: 
                 (self.X, self.W) = samples.optimal_samples(self.ps, c_samples)
                 tic = timeit.default_timer()
                 self.Y = self.function(self.X).reshape(-1, 1)
+                if not self.Y.shape[0]==self.X.shape[0]:
+                    raise ValueError('Function must return as many outputs values as it is given inputs')
                 work_model = timeit.default_timer() - tic
-            return work_model
+            return work_model,self.get_contributions()
         else:
-            return 0
+            return 0,self.get_contributions()
         
+    def get_contributions(self):
+        pa=self.get_approximation()
+        return {pol:pa.norm([pol]) for pol in self.ps.basis}
+    
     def get_approximation(self):
         return PolynomialApproximation(self.ps,self.ps.weighted_least_squares(self.X, self.W, self.Y))
     
