@@ -72,10 +72,9 @@ class PolynomialApproximation(object):
         
         :rtype: Function
         '''
-        
         new_coefficients=self.coefficients+other.coefficients
         new_ps=copy.deepcopy(self.ps)
-        new_ps.basis=new_coefficients.keys()
+        new_ps.basis=list(new_coefficients.keys())
         return PolynomialApproximation(ps=new_ps,coefficients=new_coefficients)
         
     def __rmul__(self,other):
@@ -102,5 +101,4 @@ class PolynomialApproximation(object):
             ax = fig.gca(projection='3d')
             ax.plot_surface(X, Y, Z)
         fig.suptitle('Polynomial approximation')
-        plt.show()
         

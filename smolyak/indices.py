@@ -3,91 +3,7 @@ Sparse multi-indices
 '''
 import itertools
 import numpy as np
-from swutil.collections import unique
 from swutil.collections import DefaultDict
-
-class DCSet(object):
-    '''
-    Stores downward closed sets of multi-indices and corresponding 
-    admissible multi-indices.
-        
-    A multi-index is called admissible here if the set of multi-indices 
-    remains downward closed after adding it
-    '''
-    def __init__(self,mis=(),dims = ()):
-        self.mis = []
-        self.active_dims = set()
-        self.candidates = {MultiIndex()} 
-        self.add_dimensions(dims)
-        self.add_many(mis)
-    
-    def add(self, mi):
-        '''
-        Add new multi-index. 
-        
-        :param mi: Multi-index to be added
-        :type mi:  MultiIndex
-        '''
-        if not mi in self.mis:
-            self.mis.append(mi)
-            if mi in self.candidates:
-                self.candidates -= {mi}
-            else:
-                raise ValueError('Multi-index is not admissible')
-            for dim in self.active_dims:
-                candidate = mi + kronecker(dim)
-                if self.is_admissible(candidate):
-                    self.candidates.add(candidate)
-    
-    def add_many(self,mis):
-        '''
-        Add multiple new multi-indices.
-        
-        :param mis: Multi-indices to be added
-        :type mis: Iterable of SparseIndices
-        '''
-        mis=sorted(mis)
-        for mi in mis:
-            self.add(mi)     
-        
-    def add_dimensions(self,dims):
-        for dim in dims:
-            if dim in self.active_dims:
-                raise ValueError('{} was already an active dimension of downward closed set'.format(dim))
-            else:
-                self.active_dims.add(dim)
-                if MultiIndex() in self.mis:
-                    self.candidates.add(kronecker(dim))
-            
-    def is_admissible(self, mi):
-        '''
-        Check if given multi-index is admissible.
-        '''
-        for dim in mi.active_dims():
-            test = mi - kronecker(dim)
-            if not test in self.mis:
-                return False
-        return True
-        
-    def __iter__(self):
-        return self.mis.__iter__()
-       
-    def __str__(self):
-        return list(self.mis).__str__()
-               
-    def __repr__(self):
-        return 'dc_set('+list(self.mis).__str__()+')'
-                
-    def __contains__(self,mi):
-        return mi in self.mis
-    
-def kronecker(dim):
-    '''
-    Returns kronecker vector with single entry 1 in dimension :code:`dim` 
-    '''
-    mi = MultiIndex()
-    mi[dim] = 1
-    return mi
 
 class MultiIndex(object):
     '''
@@ -129,7 +45,7 @@ class MultiIndex(object):
         '''
         Return dimensions with non-zero entries
         '''
-        return sorted(self.multiindex.keys())
+        return sorted(list(self.multiindex.keys()))
         
     def mod(self, mod):
         r'''
@@ -234,12 +150,22 @@ class MultiIndex(object):
     #    return new
     
     def __lt__(self,other):
-        dim_max=max(itertools.chain(self.active_dims(),other.active_dims()))
-        return self.full_tuple(dim_max+1)<other.full_tuple(dim_max+1)
+        d1,d2 = self.active_dims(),other.active_dims()
+        if not (d1 or d2):
+            return False
+        else:
+            dims = itertools.chain(d1,d2)  
+            dim_max=max(dims)
+            return self.full_tuple(dim_max+1)<other.full_tuple(dim_max+1)
     
     def __le__(self,other):
-        dim_max=max(itertools.chain(self.active_dims(),other.active_dims()))
-        return self.full_tuple(dim_max+1)<=other.full_tuple(dim_max+1)
+        d1,d2 = self.active_dims(),other.active_dims()
+        if not (d1 or d2):
+            return True
+        else:
+            dims = itertools.chain(d1,d2)  
+            dim_max=max(dims)
+            return self.full_tuple(dim_max+1)<=other.full_tuple(dim_max+1)
             
     def __eq__(self, other):
         return self.multiindex == other.multiindex
@@ -283,7 +209,98 @@ class MultiIndex(object):
         else:
             if dim in self.multiindex.keys():
                 self.multiindex.pop(dim)
+    
+    def __neg__(self):
+        new  = self.copy()
+        for dim in new.multiindex:
+            new[dim] = -new[dim]
+        return new
+
+class DCSet(object):
+    '''
+    Stores downward closed sets of multi-indices and corresponding 
+    admissible multi-indices.
         
+    A multi-index is called admissible here if the set of multi-indices 
+    remains downward closed after adding it
+    '''
+    def __init__(self,mis=(),dims = ()):
+        self.mis = []
+        self.active_dims = set()
+        self.candidates = {MultiIndex()} 
+        self.add_dimensions(dims)
+        self.add_many(mis)
+    
+    def add(self, mi):
+        '''
+        Add new multi-index. 
+        
+        :param mi: Multi-index to be added
+        :type mi:  MultiIndex
+        '''
+        if not mi in self.mis:
+            self.mis.append(mi)
+            if mi in self.candidates:
+                self.candidates -= {mi}
+            else:
+                raise ValueError('Multi-index is not admissible')
+            for dim in self.active_dims:
+                candidate = mi + kronecker(dim)
+                if self.is_admissible(candidate):
+                    self.candidates.add(candidate)
+    
+    def add_many(self,mis):
+        '''
+        Add multiple new multi-indices.
+        
+        :param mis: Multi-indices to be added
+        :type mis: Iterable of SparseIndices
+        '''
+        mis=sorted(mis)
+        for mi in mis:
+            self.add(mi)     
+        
+    def add_dimensions(self,dims):
+        for dim in dims:
+            if dim in self.active_dims:
+                raise ValueError('{} was already an active dimension of downward closed set'.format(dim))
+            else:
+                self.active_dims.add(dim)
+                if MultiIndex() in self.mis:
+                    self.candidates.add(kronecker(dim))
+            
+    def is_admissible(self, mi):
+        '''
+        Check if given multi-index is admissible.
+        '''
+        for dim in mi.active_dims():
+            test = mi - kronecker(dim)
+            if not test in self.mis:
+                return False
+        return True
+        
+    def __iter__(self):
+        return self.mis.__iter__()
+       
+    def __str__(self):
+        return list(self.mis).__str__()
+               
+    def __repr__(self):
+        return 'dc_set('+list(self.mis).__str__()+')'
+                
+    def __contains__(self,mi):
+        return mi in self.mis
+    
+def kronecker(dim):
+    '''
+    Returns kronecker vector with single entry 1 in dimension :code:`dim` 
+    '''
+    mi = MultiIndex()
+    mi[dim] = 1
+    return mi
+
+
+    
 class MultiIndexDict(object): 
     '''
     Dictionary with SparseIndices as keys
@@ -345,7 +362,7 @@ def get_bundles(sparse_indices,is_bundled):
     for si in sparse_indices:
         representer=si.restrict(not_bundled)
         bundles[representer]+=[si]
-    return bundles.values()
+    return list(bundles.values())
 
 
 def get_bundle(multi_index,multi_indices,is_bundled):
@@ -432,11 +449,11 @@ def hyperbolic_cross(L, exponents=None, c_dim=None):
     return get_admissible_indices(admissible, c_dim)
     
 def simplex(L, weights=None, c_dim=None):
-    if not weights:
+    if weights is None:
         weights = 1
     if not hasattr(weights, '__contains__'):
         if not c_dim:
-            raise ValueError('Specify either list of rectangle sides or c_dim')
+            raise ValueError('Specify either list of weights sides or c_dim')
         else:
             weights = [weights] * c_dim
     else:
@@ -531,8 +548,7 @@ class MixedDifferences(object):
         else:
             return sum(y)
 
-
-def combination_rule(mis, function=None):
+def combination_rule(mis):
     '''
     Compute coefficients of combination rule.
     

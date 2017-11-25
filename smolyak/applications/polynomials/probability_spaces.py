@@ -1,12 +1,11 @@
-from abc import ABCMeta, abstractmethod
+from abc import abstractmethod, ABC
 import numpy as np
 from numpy import meshgrid
 
-class ProbabilitySpace:
+class ProbabilitySpace(ABC):
     '''
     Probability spaces over subsets of Euclidean space
     '''
-    __metaclass__ = ABCMeta
     
     @abstractmethod
     def lebesgue_density(self, X): 

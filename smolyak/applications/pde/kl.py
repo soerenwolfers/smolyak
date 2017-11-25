@@ -1,9 +1,9 @@
 from dolfin import *  # @UnusedWildImport
 import logging
 import numpy as np
-logging.getLogger('FFC').setLevel(logging.WARNING)
+logging.getLogger('FFC').setLevel(logging.warnings)
 logging.basicConfig(level=logging.DEBUG)
-logging.getLogger('UFL').setLevel(logging.WARNING)
+logging.getLogger('UFL').setLevel(logging.warnings)
 set_log_level(WARNING)
 
 def kl(y, N, order=1):

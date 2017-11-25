@@ -20,4 +20,4 @@ smolyak includes the following modules and packages:
     * Polynomial approximation
     
 '''
-from .smolyak import Approximator, Decomposition
+from .smolyak import SparseApproximation, Decomposition

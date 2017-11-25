@@ -15,7 +15,7 @@ class MIWeightedPolynomialApproximator(object):
     :math:`f\colon [a,b]^d\to\mathbb{R}`
     that can be sampled at different levels of accuracy.
     '''
-    def __init__(self, function, c_dim_acc, ps,C=2,sampler='optimal',reparametrization=False):
+    def __init__(self, function, n, polynomial_space,C=2,sampler='optimal',reparametrization=False):
         r'''
         :param function: Function :math:`[a,b]^d\to\mathbb{R}` that is being
         approximated. Needs to support :code:`__call__(X,mi)` where :code:`X` 
@@ -23,7 +23,7 @@ class MIWeightedPolynomialApproximator(object):
         multi-index describing the required accuracy of the samples.
         :param cdim_acc: Number of discretization parameters of `self.function`
         (=length of `mi` above)
-        :param ps: Polynomial space
+        :param polynomial_space: Polynomial space
         :param C: see WeightedPolynomialApproximator
         :param sampler: see WeightedPolynomialApproximator
         :param reparametrization: Determines whether polynomial subspaces are indexed with 
@@ -33,15 +33,15 @@ class MIWeightedPolynomialApproximator(object):
         '''
         self.C=C
         self.sampler=sampler
-        self.c_dim_acc = c_dim_acc
-        if len(ps.basis) > 0:
+        self.n = n
+        if len(polynomial_space.basis) > 0:
             raise ValueError('Polynomial subspace must be empty on initialization')
         else:
-            self.ps = ps
+            self.ps = polynomial_space
         self.WPAs = DefaultDict(default=self.__default_WPA)
-        self.is_bundled = lambda dim: dim >= self.c_dim_acc
+        self.bundled_dims = lambda dim: dim >= self.n
         def T(mi): 
-            mi_acc = mi.mod(self.is_bundled)
+            mi_acc = mi.mod(self.bundled_dims)
             return VFunction(lambda X: function(X, mi_acc))
         self.function = function
         self.mixed_differences = MixedDifferences(T)
@@ -76,7 +76,7 @@ class MIWeightedPolynomialApproximator(object):
         :return: work and contribution associated to mis
         :rtype: (work,contribution) where work is real number and contribution is dictionary mis>reals
         '''
-        bundles=indices.get_bundles(mis, self.is_bundled)
+        bundles=indices.get_bundles(mis, self.bundled_dims)
         work = 0
         contributions=dict()
         for bundle in bundles:
@@ -85,14 +85,14 @@ class MIWeightedPolynomialApproximator(object):
             work+=new_work
             #if work>0:
             pa = self.WPAs[mi_acc].get_approximation()
-            contributions.update({mi_acc+mi.shifted(self.c_dim_acc): pa.norm(self._pols_from_mi(mi)) for mi in mis_pols})
+            contributions.update({mi_acc+mi.shifted(self.n): pa.norm(self._pols_from_mi(mi)) for mi in mis_pols})
         return work, contributions
     
     def reset(self):
         '''
         Delete all stored samples
         '''
-        self.__init__(function=self.function, c_dim_acc=self.c_dim_acc, ps=self.ps,C=self.C,sampler=self.sampler)
+        self.__init__(function=self.function, n=self.n, polynomial_space=self.ps,C=self.C,sampler=self.sampler)
     
     def estimated_work(self, mis):          
         '''
@@ -102,7 +102,7 @@ class MIWeightedPolynomialApproximator(object):
         :param mis: (List of) multi-index
         :return: Number of new sampls
         '''
-        bundles = indices.get_bundles(mis,self.is_bundled)
+        bundles = indices.get_bundles(mis,self.bundled_dims)
         work = 0
         for bundle in bundles:
             mis_pols, mi_acc = self.__handle_mis(bundle)
@@ -110,8 +110,8 @@ class MIWeightedPolynomialApproximator(object):
         return work
 
     def __handle_mis(self, mis):
-        mis_pols = [mi.shifted(-self.c_dim_acc) for mi in mis]
-        mi_acc = mis[0].mod(self.is_bundled)
+        mis_pols = [mi.shifted(-self.n) for mi in mis]
+        mi_acc = mis[0].mod(self.bundled_dims)
         return mis_pols, mi_acc
      
     def _pols_from_mi(self, mi):

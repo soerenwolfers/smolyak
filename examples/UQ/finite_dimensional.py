@@ -32,7 +32,7 @@ class ResponseSurfaceApproximation(object):
                                        has_work_model=True,
                                        has_contribution_model=True)
         SA = Approximator(decomposition=decomposition,work_type='work_model',log=Log())
-        SA.expand_adaptive(T_max=2**test['step'])
+        SA.expand_adaptive(T=2**test['step'])
         return mipa.get_approximation()
     
     def analyze(self,results,info):

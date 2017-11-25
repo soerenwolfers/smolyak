@@ -4,7 +4,7 @@ Test smolyak.sparse.mixed_differences
 import unittest
 from smolyak.indices import MixedDifferences
 from smolyak.indices import MultiIndex
-from smolyak import Approximator
+from smolyak import SparseApproximation
 from smolyak import Decomposition
             
 class TestMixedDifferences(unittest.TestCase):
@@ -17,8 +17,8 @@ class TestMixedDifferences(unittest.TestCase):
                 s += md(MultiIndex((i, j)))
         self.assertAlmostEqual(s, 3, places=1)
         decomp = Decomposition(func=md,n=3,is_md=True)
-        SA = Approximator(decomp)
-        SA.expand_adaptive(c_steps=100)
+        SA = SparseApproximation(decomp)
+        SA.expand_adaptive(N=100)
         self.assertAlmostEqual(SA.get_approximation(), 3, places=2)
 
 if __name__ == "__main__":

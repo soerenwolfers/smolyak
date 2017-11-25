@@ -7,9 +7,9 @@ class DirichletBoundary(SubDomain):
 
 import logging
 import numpy as np
-logging.getLogger('FFC').setLevel(logging.WARNING)
+logging.getLogger('FFC').setLevel(logging.warnings)
 logging.basicConfig(level=logging.DEBUG)
-logging.getLogger('UFL').setLevel(logging.WARNING)
+logging.getLogger('UFL').setLevel(logging.warnings)
 set_log_level(WARNING)
 
 def poisson_smooth(y, N, order=1):

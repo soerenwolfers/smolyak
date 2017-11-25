@@ -38,8 +38,8 @@ class Experiment(object):
         control=np.array([0.1]+self.opts['d']*[1.])
         decomposition = Decomposition(func=MixedDifferences(f=lambda x,y:self.func(x,y,100,control)[0], zipped=False,c_var=2,reparametrization=True), n=2,is_md=True)
         SA = Approximator(decomposition=decomposition)
-        SA.expand_adaptive(T_max=test['T_max'])
-        #SA.expand_nonadaptive(L=validate_args['L'])
+        SA.expand_adaptive(T=test['T_max'])
+        #SA.expand_apriori(L=validate_args['L'])
         return SA
     
     def run_nonadaptive(self,test):
@@ -49,7 +49,7 @@ class Experiment(object):
                                       work_factor=[2,1],
                                       contribution_factor=[1,1])
         SA = Approximator(decomposition=decomposition)
-        SA.expand_nonadaptive(L=test['L'])
+        SA.expand_apriori(L=test['L'])
         return SA
     
     def global_opt(self,test):

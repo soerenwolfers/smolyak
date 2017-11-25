@@ -1,4 +1,4 @@
-from abc import ABCMeta, abstractmethod
+from abc import ABCMeta, abstractmethod, ABC
 import numpy as np
 from smolyak.applications.polynomials.orthogonal_polynomials import evaluate_orthonormal_polynomials
 import warnings
@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from matplotlib import cm
 
 
-class PolynomialSpace:
+class PolynomialSpace(ABC):
     '''
     Vector space of polynomials for least-squares polynomial approximation on open 
     subsets of euclidean space.
@@ -17,12 +17,11 @@ class PolynomialSpace:
     Combines domain (in form of probability space) with description
     of finite-dimensional subspace of polynomials
     '''
-    __metaclass__ = ABCMeta
     
-    def __init__(self, probability_space,WARNING = False):
+    def __init__(self, probability_space,warnings = False):
         self.probability_space=probability_space
         self.basis = []
-        self.WARNING = WARNING
+        self.warnings = warnings
     
     @abstractmethod
     def get_c_var(self):
@@ -75,11 +74,11 @@ class PolynomialSpace:
         W = W.reshape((W.size, 1))
         R = B.transpose().dot(Y * W)
         G = B.transpose().dot(B * W)
-        if self.WARNING and np.linalg.cond(G) > 100:
+        if self.warnings and np.linalg.cond(G) > 100:
             warnings.warn('Ill conditioned Gramian matrix encountered') 
         if G.shape[0]>0:
             coefficients = solve(G, R, sym_pos=True)
-        if self.WARNING and not np.isfinite(coefficients).all():
+        if self.warnings and not np.isfinite(coefficients).all():
             warnings.warn('Numerical instability encountered')
         return {pol: coefficients[i] for i, pol in enumerate(self.basis)}
          

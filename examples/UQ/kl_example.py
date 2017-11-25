@@ -39,7 +39,7 @@ def kl_nonadaptive():
                             contribution_factor=contribution,
                             external=True)
         tic = timeit.default_timer()
-        SA.expand_nonadaptive(L=L,scale=scale)
+        SA.expand_apriori(L=L,scale=scale)
         runtimes.append(timeit.default_timer() - tic)
         A = mipa.get_approximation()
         As.append(A)
@@ -71,7 +71,7 @@ def kl_adaptive():
                             work_factor=lambda mis: mipa.estimated_work(mis)*2**mis[0][0],
                             external=True,is_md=True)
         tic = timeit.default_timer()
-        SA.expand_adaptive(T_max=4.**step,contribution_exponents=lambda dim: -np.log(xi*(dim+1)**exponent))
+        SA.expand_adaptive(T=4.**step,contribution_exponents=lambda dim: -np.log(xi*(dim+1)**exponent))
         runtimes.append(timeit.default_timer() - tic)
         A = mipa.get_approximation()
         As.append(A)
