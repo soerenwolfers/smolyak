@@ -4,6 +4,7 @@ Sparse multi-indices
 import itertools
 import numpy as np
 from swutil.collections import DefaultDict
+from swutil.validation import validate, Integer
 
 class MultiIndex(object):
     '''
@@ -228,6 +229,8 @@ class DCSet(object):
         self.mis = []
         self.active_dims = set()
         self.candidates = {MultiIndex()} 
+        if Integer.valid(dims):
+            dims = range(dims)
         self.add_dimensions(dims)
         self.add_many(mis)
     
@@ -405,66 +408,69 @@ def get_admissible_indices(admissible, dim=-1):
             mis.append(next_admissible(admissible, mis[-1], dim))
     return mis
 
-def rectangle(L=None, c_dim=None):
+def rectangle(L=None, n=None):
     if not hasattr(L, '__contains__'):
-        if c_dim is None:
-            raise ValueError('Specify either list of rectangle sides or c_dim')
+        if n is None:
+            raise ValueError('Specify either list of rectangle sides or n')
         else:
-            L = [L] * c_dim
+            L = [L] * n
     else:
-        if c_dim is not None:
-            if c_dim != len(L):
-                raise ValueError('c_dim does not match length of L')
+        if n is not None:
+            if n != len(L):
+                raise ValueError('n does not match length of L')
         else:
-            c_dim = len(L)
+            n = len(L)
         
     def admissible(mi):
             return all([v < L[dim] for dim, v in mi])
-    return get_admissible_indices(admissible, c_dim)
+    return get_admissible_indices(admissible, n)
     
-def pyramid(L, Gamma_1, Beta_1, Gamma_2, Beta_2, c_dim):
+def pyramid(L, Gamma_1, Beta_1, Gamma_2, Beta_2, n):
     def admissible(mi):
         return ((mi.leftshift() == MultiIndex() and (Gamma_1 + Beta_1) * mi[0] <= L) 
             or (mi.leftshift() != MultiIndex() and (Gamma_2 + Beta_2) * max([v for __, v in mi.leftshift()]) + (Gamma_1 + Beta_1) * mi[0] <= L))
-    return get_admissible_indices(admissible, c_dim)
+    return get_admissible_indices(admissible, n)
     
-def hyperbolic_cross(L, exponents=None, c_dim=None):
+def hyperbolic_cross(L, exponents=None, n=None):
     if not exponents:
         exponents = 1
     if not hasattr(exponents, '__contains__'):
-        if not c_dim:
-            raise ValueError('Specify either list of exponents or c_dim')
+        if not n:
+            raise ValueError('Specify either list of exponents or n')
         else:
-            exponents = [exponents] * c_dim
+            exponents = [exponents] * n
     else:
-        if c_dim != len(exponents):
-            raise ValueError('c_dim does not match length of L')
+        if n != len(exponents):
+            raise ValueError('n does not match length of L')
         else:
-            c_dim = len(exponents)
+            n = len(exponents)
     def admissible(mi):
         if exponents:
             return np.prod([(v + 1) ** exponents[i] for i, v in mi]) < L
         else: 
             return np.prod([v + 1 for __, v in mi]) < L
-    return get_admissible_indices(admissible, c_dim)
+    return get_admissible_indices(admissible, n)
     
-def simplex(L, weights=None, c_dim=None):
+def simplex(L, weights=None, n=None):
+    '''
+    Returns n-dimensional simplex :math:`\{(k_1,\dots,k_n)\in\mathbb{N}^n : k\dot w \leq L\}`  
+    '''
     if weights is None:
         weights = 1
     if not hasattr(weights, '__contains__'):
-        if not c_dim:
-            raise ValueError('Specify either list of weights sides or c_dim')
+        if not n:
+            raise ValueError('Specify either list of weights sides or n')
         else:
-            weights = [weights] * c_dim
+            weights = [weights] * n
     else:
-        if c_dim:
-            if c_dim != len(weights):
-                raise ValueError('c_dim does not match length of L')
+        if n:
+            if n != len(weights):
+                raise ValueError('n does not match length of L')
         else:
-            c_dim = len(weights)
+            n = len(weights)
     def admissible(mi):
             return sum([weights[dim] * v for dim, v in mi]) <= L
-    return get_admissible_indices(admissible, c_dim)
+    return get_admissible_indices(admissible, n)
 
 def cartesian_product(entries, dims=None):
     '''
