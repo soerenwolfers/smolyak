@@ -1,4 +1,3 @@
-from abc import ABCMeta, abstractmethod, ABC
 import numpy as np
 from smolyak.applications.polynomials.orthogonal_polynomials import evaluate_orthonormal_polynomials
 import warnings
@@ -7,42 +6,28 @@ from swutil.np_tools import grid_evaluation
 import copy
 import matplotlib.pyplot as plt
 from matplotlib import cm
+from smolyak.applications.polynomials.probability_spaces import UnivariateProbabilitySpace,\
+    TensorProbabilitySpace
 
-
-class PolynomialSpace(ABC):
+class PolynomialSpace():
     '''
     Vector space of polynomials for least-squares polynomial approximation on open 
-    subsets of euclidean space.
+    subsets of Euclidean space.
     
     Combines domain (in form of probability space) with description
     of finite-dimensional subspace of polynomials
     '''
     
     def __init__(self, probability_space,warnings = False):
+        if isinstance(probability_space,UnivariateProbabilitySpace):
+            probability_space = TensorProbabilitySpace(probability_space)
         self.probability_space=probability_space
         self.basis = []
         self.warnings = warnings
     
-    @abstractmethod
-    def get_c_var(self):
-        '''
-        Return dimension of domain (not polynomial subspace!)
-        '''
-        pass
-        
-    @abstractmethod
-    def evaluate_basis(self, X): 
-        '''
-        Evaluate basis polynomials
-        
-        :param X: Sample locations
-        :type X: `N x self.get_c_var()` numpy array
-        '''
-        pass
-    
     def get_dimension(self): 
         '''
-        Return dimension of polynomial subspace (not of domain)
+        Return dimension of polynomial subspace (not of domain, use get_c_var() for that)
         '''
         return len(self.basis)
     
@@ -88,55 +73,13 @@ class PolynomialSpace(ABC):
         else:
             return set()
     
-class UnivariatePolynomialSpace(PolynomialSpace):
-    '''
-    Univariate polynomial subspace.
-    
-    Need to be initialized with UnivariateProbabilitySpace
-    '''
     def get_c_var(self):
-        return 1
-     
-    def evaluate_basis(self, X):
-        return evaluate_orthonormal_polynomials(
-            np.squeeze(X),
-            max(self.basis), 
-            measure=self.probability_space.measure, 
-            interval=self.probability_space.interval
-        )[:,self.basis]
-           
-    def expand_basis(self, polynomials):
         '''
-        Expand polynomial subspace.
-        
-        :param polynomials: Polynomials to be added
+        Return dimension of domain (not polynomial subspace, use get_dimension() for that)
         '''
-        expansion = [pol[0] if hasattr(pol,'__getitem__') else pol for pol in polynomials]
-        self.basis += expansion
-        
-    def plot_optimal_distribution(self, N=200, L=1):
-        '''
-        Plot optimal sampling distribution
-        '''
-        X = self.get_range(N, L)
-        Z = self.probability_space.lebesgue_density(X) / self.optimal_weights(X)
-        fig = plt.figure()
-        ax = fig.gca()
-        ax.plot(X, Z)
-        fig.suptitle('Lebesgue density of optimal distribution')
-        plt.show()
-        return np.sum(Z) / Z.size
-    
-class TensorPolynomialSpace(PolynomialSpace):
-    '''
-    Multivariate polynomial subspace.
-    
-    Requires initialization with TensorProbabilitySpace
-    '''
-    def get_c_var(self):
         return self.probability_space.get_c_var()
     
-    def evaluate_basis(self, X):
+    def evaluate_basis(self, X,derivative=None):
         '''
         Evaluates basis polynomials at given sample locations.
         
@@ -145,22 +88,32 @@ class TensorPolynomialSpace(PolynomialSpace):
         :return: Basis polynomials evaluated at X
         :rtype: `N x self.get_dimension()` np.array
         '''
+        
         values = np.ones((X.shape[0], self.get_dimension()))
         basis_values = {}
         if self.basis:
             active_vars = set.union(*[set(pol.active_dims()) for pol in self.basis]) 
         else:
             active_vars = set()
-        for dim in active_vars:
-            basis_values[dim] = evaluate_orthonormal_polynomials(
-                X[:,dim],
-                max(pol[dim] for pol in self.basis), 
-                measure=self.probability_space.ups[dim].measure, 
-                interval=self.probability_space.ups[dim].interval
-            )
-        for i, pol in enumerate(self.basis):
-            for dim in pol.active_dims():
-                values[:, i] *= basis_values[dim][:, pol[dim]]   
+        if not derivative:
+            derivative = np.zeros(self.get_c_var())
+        if any(order>0 and dim not in active_vars for dim,order in enumerate(derivative)):
+            values *=0
+        else:
+            for dim in active_vars:
+                basis_values[dim] = evaluate_orthonormal_polynomials(
+                    X[:,dim],
+                    max(pol[dim] for pol in self.basis), 
+                    measure=self.probability_space.ups[dim].measure, 
+                    interval=self.probability_space.ups[dim].interval,
+                    derivative = derivative[dim]
+                )
+            for i, pol in enumerate(self.basis):
+                if any(order>0 and dim not in pol.active_dims() for dim,order in enumerate(derivative)):
+                    values[:,i]*=0
+                else:
+                    for dim in pol.active_dims():
+                        values[:, i] *= basis_values[dim][:, pol[dim]]   
         return values
         
     def set_basis(self,polynomials):
@@ -187,7 +140,7 @@ class TensorPolynomialSpace(PolynomialSpace):
         '''
         if self.get_c_var() == 1:
             X = self.get_range(N, L)
-            Z = self.probabiliy_space.lebesgue_density(X) * self.optimal_weights(X)
+            Z = self.probability_space.lebesgue_density(X) / self.optimal_weights(X)
             fig = plt.figure()
             ax = fig.gca()
             ax.plot(X, Z)

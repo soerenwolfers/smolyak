@@ -4,14 +4,16 @@ Test smolyak.polreg.orthogonal_polynomials
 import unittest
 from smolyak.applications.polynomials.orthogonal_polynomials import evaluate_orthonormal_polynomials
 import numpy as np
+from matplotlib import pyplot
+from itertools import islice
 
 class TestOrthogonalPolynomials(unittest.TestCase):
 
     def test_legendre(self):
         cEvaluations = 100000
         degree_max = 1000
-        a = -2
-        b = 100
+        a = -1
+        b = 1
         X = np.linspace(a, b, cEvaluations)
         Y = evaluate_orthonormal_polynomials(X, degree_max, 'u', interval=(a, b))
         self.assertEqual(Y.shape, (cEvaluations, degree_max + 1))
@@ -19,6 +21,9 @@ class TestOrthogonalPolynomials(unittest.TestCase):
         normsquared_1 = Y[:, 1].transpose().dot(Y[:, 1]) / cEvaluations
         normsquared_end = Y[:, -1].transpose().dot(Y[:, -1]) / cEvaluations
         scalarproduct_10_20 = Y[:, 10].transpose().dot(Y[:, 20]) / cEvaluations
+        D=evaluate_orthonormal_polynomials(X,degree_max,'u',interval=(a,b),derivative = 1)
+        for j,(y,d) in islice(enumerate(zip(Y.T,D.T)),10):
+            self.assertAlmostEqual(y[-1],y[0]+np.sum(d)*(b-a)/cEvaluations,delta=0.1)
         self.assertAlmostEqual(normsquared_start, 1, delta=0.05)
         self.assertAlmostEqual(normsquared_1, 1, delta=0.05)
         self.assertAlmostEqual(normsquared_end, 1, delta=0.05)

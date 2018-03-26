@@ -4,28 +4,44 @@ from mpl_toolkits.mplot3d import Axes3D  # @UnusedImport @UnresolvedImport
 from swutil.np_tools import grid_evaluation
 import copy
 from swutil.collections import RFunction
+from smolyak.applications.polynomials.probability_spaces import ProbabilitySpace
+from smolyak.applications.polynomials.polynomial_spaces import PolynomialSpace
 
 class PolynomialApproximation(object):
-    def __init__(self,ps,coefficients=None):
+    def __init__(self,ps,coefficients=None,basis = None):
         '''
         
-        :param ps: Polynomial subspace in which approximation lives
-        :type ps: PolynomialSubspace
+        :param polynomial_space: Polynomial subspace in which approximation lives
+        :type polynomial_space: PolynomialSubspace
         :param coefficients: Coefficients with respect to basis determined by
-            :code:`ps`
-        :type coefficients: Dictionary ps.basis->reals
+            :code:`polynomial_space`
+        :type coefficients: Dictionary polynomial_space.basis->reals
         '''
-        self.ps = ps
+        if isinstance(ps,ProbabilitySpace):
+            self.polynomial_space = PolynomialSpace(ps)
+            if basis is None:
+                if hasattr(coefficients,'keys'):
+                    self.polynomial_space.set_basis(coefficients.keys())
+                else:
+                    raise ValueError('Must specfiy either polynomial space or probability space and basis or probability space and coefficients dictionary whose keys determine basis')
+            else:
+                self.polynomial_space.set_basis(basis)
+        else:
+            self.polynomial_space = ps
+            if basis is not None:
+                self.polynomial_space.set_basis(basis)
         self.set_coefficients(coefficients)
         
     def set_coefficients(self,coefficients):
         if hasattr(coefficients,'keys'):
-            if set(coefficients.keys()) != set(self.ps.basis):
+            if set(coefficients.keys()) != set(self.polynomial_space.basis):
                 raise ValueError('Coefficients do not match polynomial basis')
             self.coefficients=RFunction(coefficients)
-        elif coefficients:
+        elif coefficients is not None:
             t=dict()
-            for i,p in enumerate(self.ps.basis):
+            if len(self.polynomial_space.basis)!=len(coefficients):
+                raise ValueError('Number of coefficients does not match polynomial subspace dimension')
+            for i,p in enumerate(self.polynomial_space.basis):
                 t[p]=coefficients[i]
             self.coefficients=RFunction(t)
         
@@ -37,17 +53,19 @@ class PolynomialApproximation(object):
         :return: Sum of squares of coefficients corresponding to mi
         '''
         if pols is None:
-            pols=self.ps.basis
+            pols=self.polynomial_space.basis
         return sum([self.coefficients[pol] ** 2 for pol in pols])  
         
-    def __call__(self, X):
+    def __call__(self, X,derivative=None):
         '''
         Return approximation at specified locations.
         
         :param X: Locations of evaluations
         :return: Values of approximation at specified locations
         '''
-        return self.ps.evaluate_basis(X).dot(np.array([self.coefficients[pol] for pol in self.ps.basis]).reshape(-1, 1))
+        T = self.polynomial_space.evaluate_basis(X,derivative=derivative)
+        print(T.shape)
+        return T.dot(np.array([self.coefficients[pol] for pol in self.polynomial_space.basis]).reshape(-1, 1))
     
     def norm(self, pols=None):
         '''
@@ -57,7 +75,7 @@ class PolynomialApproximation(object):
         :return: Norm of projection onto polynomial space described by mi
         '''
         if pols is None:
-            pols=self.ps.basis
+            pols=self.polynomial_space.basis
         return np.sqrt(self._sum_sq_coeff(pols))
     
     def __radd__(self, other):
@@ -73,7 +91,7 @@ class PolynomialApproximation(object):
         :rtype: Function
         '''
         new_coefficients=self.coefficients+other.coefficients
-        new_ps=copy.deepcopy(self.ps)
+        new_ps=copy.deepcopy(self.polynomial_space)
         new_ps.basis=list(new_coefficients.keys())
         return PolynomialApproximation(ps=new_ps,coefficients=new_coefficients)
         
@@ -85,18 +103,18 @@ class PolynomialApproximation(object):
         new.coefficients = other*self.coefficients
         return new
     
-    def plot(self, L=10):
+    def plot(self):
         '''
         Plot polynomial approximation.
         '''
         fig = plt.figure()
-        if self.ps.get_c_var() == 1:
-            X = self.ps.probability_space.get_range()
+        if self.polynomial_space.get_c_var() == 1:
+            X = self.polynomial_space.probability_space.get_range()
             Z = self(X)
             ax = fig.gca()
             ax.plot(X, Z)
-        elif self.ps.get_c_var() == 2:
-            X, Y = self.ps.probability_space.get_range()
+        elif self.polynomial_space.get_c_var() == 2:
+            X, Y = self.polynomial_space.probability_space.get_range()
             Z = grid_evaluation(X, Y, self)
             ax = fig.gca(projection='3d')
             ax.plot_surface(X, Y, Z)

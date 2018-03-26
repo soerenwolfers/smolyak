@@ -4,7 +4,7 @@ Orthogonal polynomials
 import numpy as np
 import math
 
-def evaluate_orthonormal_polynomials(X, max_degree, measure, interval=(0, 1)):
+def evaluate_orthonormal_polynomials(X, max_degree, measure, interval=(0, 1),derivative = 0):
     r'''
     Compute values of orthonormal polynomials on `interval` in :math:`X`.
     The endpoints of `interval` can be specified when `measure` is uniform or Chebyshev.
@@ -22,12 +22,22 @@ def evaluate_orthonormal_polynomials(X, max_degree, measure, interval=(0, 1)):
     if measure in ['u', 'c']:
         Xtilde = (X - (interval[1] + interval[0]) / 2.) / ((interval[1] - interval[0]) / 2.) 
         if measure == 'u':
-            temp = legendre_polynomials(Xtilde, max_degree + 1)
+            y = legendre_polynomials(Xtilde, max_degree + 1)
+            if derivative ==0:
+                return y
+            if derivative > 0:
+                for _ in range(derivative):
+                    y1 = np.zeros(y.shape)
+                    y1[:,1] = np.sqrt(3)*np.ones(y.shape[0])
+                    for j in range(2,max_degree+1):
+                        y1[:,j] = np.sqrt(2*j+1)*((2*j-1)*y[:,j-1]/np.sqrt(2 * j - 1) + y1[:,j-2]/np.sqrt(2*j-3))
+                    y=y1
+                return (2/(interval[1]-interval[0]))**derivative*y
         elif measure == 'c':
-            temp = chebyshev_polynomials(Xtilde, max_degree + 1)
+            return chebyshev_polynomials(Xtilde, max_degree + 1)
     elif measure == 'h':
-        temp = hermite_polynomials(X, max_degree + 1)
-    return temp
+        return hermite_polynomials(X, max_degree + 1)
+    return y
     
 def chebyshev_polynomials(X, N):
     r'''
