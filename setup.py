@@ -2,7 +2,7 @@
 from setuptools import setup, find_packages
 
 setup(name='smolyak',
-      version='1.0',
+      version='2',
       description='Accelerate scientific computations using Smolyak\'s algorithm',
       long_description=open('README.rst').read(),
       author='Soeren Wolfers',

@@ -4,7 +4,7 @@ Sparse multi-indices
 import itertools
 import numpy as np
 from swutil.collections import DefaultDict
-from swutil.validation import validate, Integer
+from swutil.validation import Integer
 
 class MultiIndex(object):
     '''
