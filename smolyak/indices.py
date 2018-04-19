@@ -143,13 +143,6 @@ class MultiIndex(object):
                 new.multiindex[dim + n] = self.multiindex[dim]
         return new
     
-    #def leftshift(self, n=1):
-    #    new = MultiIndex()
-    #    for dim in self.multiindex:
-    #        if dim >= n:
-    #            new.multiindex[dim - n] = self.multiindex[dim]
-    #    return new
-    
     def __lt__(self,other):
         d1,d2 = self.active_dims(),other.active_dims()
         if not (d1 or d2):
@@ -191,6 +184,12 @@ class MultiIndex(object):
         for dim in other.multiindex:
             new[dim] = new[dim] + other[dim]
         return new  
+    
+    def __radd__(self,other):
+        if other ==0:
+            return self.copy()
+        else:
+            raise ValueError('Cannot add MultiIndex to {}'.format(other))
         
     def __str__(self):
         return self.full_tuple().__str__()
@@ -301,8 +300,6 @@ def kronecker(dim):
     mi = MultiIndex()
     mi[dim] = 1
     return mi
-
-
     
 class MultiIndexDict(object): 
     '''
@@ -422,7 +419,7 @@ def rectangle(L=None, n=None):
             n = len(L)
         
     def admissible(mi):
-            return all([v < L[dim] for dim, v in mi])
+            return all([v <= L[dim] for dim, v in mi])
     return get_admissible_indices(admissible, n)
     
 def pyramid(L, Gamma_1, Beta_1, Gamma_2, Beta_2, n):
@@ -446,9 +443,9 @@ def hyperbolic_cross(L, exponents=None, n=None):
             n = len(exponents)
     def admissible(mi):
         if exponents:
-            return np.prod([(v + 1) ** exponents[i] for i, v in mi]) < L
+            return np.prod([(v + 1) ** exponents[i] for i, v in mi]) <= L
         else: 
-            return np.prod([v + 1 for __, v in mi]) < L
+            return np.prod([v + 1 for __, v in mi]) <= L
     return get_admissible_indices(admissible, n)
     
 def simplex(L, weights=None, n=None):
@@ -476,16 +473,19 @@ def cartesian_product(entries, dims=None):
     '''
     Returns cartesian product of lists of reals.
     
-    :param entries: Sets that are to be multiplied
-    :type entries: List of iterables
+    :param entries: Lists of integers or reals that are to be multiplied
+    :type entries: List of lists or List of iterables
     :param dims: If specified, empty sets are included in cartesian product, 
     and resulting multi-indices only have non-zero entries in dims
     :type dims: List of integers
     :return: Cartesian product
-    :rtype: List of SparseIndices
+    :rtype: List of MultiIndices
     '''
     return [MultiIndex(zip(dims or range(len(entries)), t),sparse=True) for t in itertools.product(*entries)]
 
+def tensor_product(sets,ns):
+    shifts = [0,*np.cumsum(ns)]
+    return [sum(mi.shifted(shifts[k]) for k,mi in enumerate(mis)) for mis in itertools.product(*sets)]
 
 class MixedDifferences(object):
     r'''

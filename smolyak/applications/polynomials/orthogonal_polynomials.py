@@ -2,11 +2,10 @@
 Orthogonal polynomials
 '''
 import numpy as np
-import math
 
 def evaluate_orthonormal_polynomials(X, max_degree, measure, interval=(0, 1),derivative = 0):
     r'''
-    Compute values of orthonormal polynomials on `interval` in :math:`X`.
+    Evaluate orthonormal polynomials in :math:`X`.
     The endpoints of `interval` can be specified when `measure` is uniform or Chebyshev.
     
     :param X: Locations of desired evaluations
@@ -18,7 +17,8 @@ def evaluate_orthonormal_polynomials(X, max_degree, measure, interval=(0, 1),der
     :rtype: numpy.array of size :code:`X.shape[0] x (max_degree+1)`
     '''
     max_degree = int(max_degree)
-    
+    if derivative and measure != 'u':
+        raise ValueError('Derivative only supported for Legendre polynomials')
     if measure in ['u', 'c']:
         Xtilde = (X - (interval[1] + interval[0]) / 2.) / ((interval[1] - interval[0]) / 2.) 
         if measure == 'u':
@@ -37,11 +37,10 @@ def evaluate_orthonormal_polynomials(X, max_degree, measure, interval=(0, 1),der
             return chebyshev_polynomials(Xtilde, max_degree + 1)
     elif measure == 'h':
         return hermite_polynomials(X, max_degree + 1)
-    return y
     
 def chebyshev_polynomials(X, N):
     r'''
-    Compute values of the orthonormal Chebyshev polynomials on
+    Evaluate the orthonormal Chebyshev polynomials on
     :math:`([-1,1],dx/2)` in :math:`X\subset [-1,1]`
     
     :param X: Locations of desired evaluations
@@ -63,7 +62,7 @@ def chebyshev_polynomials(X, N):
 
 def legendre_polynomials(X, N):
     r'''
-    Compute values of the orthonormal Legendre polynomials on 
+    Evaluate the orthonormal Legendre polynomials on 
     :math:`([-1,1],dx/2)` in :math:`X\subset [-1,1]`
     
     :param X: Locations of desired evaluations
@@ -73,7 +72,7 @@ def legendre_polynomials(X, N):
     '''
     out = np.zeros((X.shape[0], N))
     deg = N - 1
-    orthonormalizer = np.reshape(np.sqrt(2 * (np.array(range(deg + 1))) + 1), (1, N))
+    orthonormalizer = np.sqrt(2 * (np.arange(deg + 1)) + 1)
     if deg < 1:
         out = np.ones((X.shape[0], 1))
     else:
@@ -85,18 +84,21 @@ def legendre_polynomials(X, N):
 
 def hermite_polynomials(X, N):
     r'''
-    Compute values of the orthonormal Hermite polynomials on 
+    Evaluate the orthonormal Hermite polynomials on 
     :math:`(\mathbb{R},\frac{1}{\sqrt{2\pi}}\exp(-x^2/2)dx)` in :math:`X\subset\mathbb{R}`
     
     
     :param X: Locations of desired evaluations
     :type X:  One dimensional np.array
     :param N: Number of polynomials
-    :rtype: numpy.array of shape :code:`X.shape[0]xN`
+    :rtype: numpy.array of shape :code:`X.shape[0] x N`
     '''
     out = np.zeros((X.shape[0], N))
     deg = N - 1
-    orthonormalizer = 1 / np.reshape([math.sqrt(math.factorial(n)) for n in range(N)], (1, N))
+    factorial = np.ones((1,N))
+    for i in range(1,N):
+        factorial[0,i:]*=i
+    orthonormalizer = 1 / np.sqrt(factorial)
     if deg < 1:
         out = np.ones((X.shape[0], 1))
     else:

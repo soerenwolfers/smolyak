@@ -1,13 +1,15 @@
-import numpy as np
-from smolyak.applications.polynomials.orthogonal_polynomials import evaluate_orthonormal_polynomials
-import warnings
-from scipy.linalg import solve
-from swutil.np_tools import grid_evaluation
 import copy
-import matplotlib.pyplot as plt
+import warnings
+import numpy as np
+
+from scipy.linalg import solve
 from matplotlib import cm
+import matplotlib.pyplot as plt
+
+from swutil.np_tools import grid_evaluation
 from smolyak.applications.polynomials.probability_spaces import UnivariateProbabilitySpace,\
     TensorProbabilitySpace
+from smolyak.applications.polynomials.orthogonal_polynomials import evaluate_orthonormal_polynomials
 
 class PolynomialSpace():
     '''
@@ -98,7 +100,7 @@ class PolynomialSpace():
         if not derivative:
             derivative = np.zeros(self.get_c_var())
         if any(order>0 and dim not in active_vars for dim,order in enumerate(derivative)):
-            values *=0
+            values[:] = 0
         else:
             for dim in active_vars:
                 basis_values[dim] = evaluate_orthonormal_polynomials(
@@ -110,12 +112,12 @@ class PolynomialSpace():
                 )
             for i, pol in enumerate(self.basis):
                 if any(order>0 and dim not in pol.active_dims() for dim,order in enumerate(derivative)):
-                    values[:,i]*=0
+                    values[:,i] = 0
                 else:
                     for dim in pol.active_dims():
                         values[:, i] *= basis_values[dim][:, pol[dim]]   
         return values
-        
+    
     def set_basis(self,polynomials):
         self.basis=[]
         self.expand_basis(polynomials)
