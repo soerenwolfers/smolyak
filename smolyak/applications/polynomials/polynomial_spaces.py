@@ -10,7 +10,6 @@ from swutil.np_tools import grid_evaluation
 from smolyak.applications.polynomials.probability_spaces import UnivariateProbabilitySpace,\
     TensorProbabilitySpace
 from smolyak.applications.polynomials.orthogonal_polynomials import evaluate_orthonormal_polynomials
-
 class PolynomialSpace():
     '''
     Vector space of polynomials for least-squares polynomial approximation on open 
@@ -80,7 +79,7 @@ class PolynomialSpace():
         Return dimension of domain (not polynomial subspace, use get_dimension() for that)
         '''
         return self.probability_space.get_c_var()
-    
+
     def evaluate_basis(self, X,derivative=None):
         '''
         Evaluates basis polynomials at given sample locations.
@@ -90,18 +89,17 @@ class PolynomialSpace():
         :return: Basis polynomials evaluated at X
         :rtype: `N x self.get_dimension()` np.array
         '''
-        
         values = np.ones((X.shape[0], self.get_dimension()))
         basis_values = {}
         if self.basis:
-            active_vars = set.union(*[set(pol.active_dims()) for pol in self.basis]) 
+            active_vars = sorted(list(set.union(*[set(pol.active_dims()) for pol in self.basis])))
         else:
-            active_vars = set()
+            active_vars = list()
         if not derivative:
             derivative = np.zeros(self.get_c_var())
         if any(order>0 and dim not in active_vars for dim,order in enumerate(derivative)):
             values[:] = 0
-        else:
+        elif active_vars:
             for dim in active_vars:
                 basis_values[dim] = evaluate_orthonormal_polynomials(
                     X[:,dim],
@@ -110,12 +108,27 @@ class PolynomialSpace():
                     interval=self.probability_space.ups[dim].interval,
                     derivative = derivative[dim]
                 )
-            for i, pol in enumerate(self.basis):
-                if any(order>0 and dim not in pol.active_dims() for dim,order in enumerate(derivative)):
-                    values[:,i] = 0
+            values = np.empty_like(values)
+            projected_basis = [pol.retract(lambda i: active_vars[i]).full_tuple(c_dim = len(active_vars)) for pol in self.basis]
+            prelim_values = {tuple():np.ones((X.shape[0]))}
+            for d in range(len(active_vars)-1):
+                prelim_values_new = {}
+                for i,pol in enumerate(projected_basis):
+                    initial = pol[:d+1]
+                    if initial not in prelim_values_new:
+                        if pol[d] == 0:
+                            prelim_values_new[initial] = prelim_values[initial[:-1]]
+                        else:
+                            prelim_values_new[initial] = prelim_values[initial[:-1]]*basis_values[active_vars[d]][:,pol[d]]
+                prelim_values = prelim_values_new
+            for i,pol in enumerate(self.basis):
+                if any(order>0 and dim not in pol.active_dims() for dim,order in enumerate(derivative)):#Check if necessary
+                    values[:,i] = 0                                                                                      
+                pre_initial = projected_basis[i][:-1]
+                if pol[active_vars[-1]] == 0:
+                    values[:,i] = prelim_values[pre_initial]
                 else:
-                    for dim in pol.active_dims():
-                        values[:, i] *= basis_values[dim][:, pol[dim]]   
+                    values[:,i] = prelim_values[pre_initial]*basis_values[active_vars[-1]][:,pol[active_vars[-1]]]
         return values
     
     def set_basis(self,polynomials):
@@ -131,7 +144,7 @@ class PolynomialSpace():
         :param polynomials: Polynomials to be added
         '''
         self.basis += polynomials
-        max_var = max([max(pol.active_dims()) + 1 if pol.active_dims() else 0 for pol in self.basis])#else 0 or else 1?
+        max_var = max([pol.max_dim()for pol in self.basis])
         if max_var > self.get_c_var():
             for __ in range(max_var - self.get_c_var()):
                 self.probability_space.ups.append(copy.deepcopy(self.probability_space.ups[-1]))

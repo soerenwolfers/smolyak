@@ -13,9 +13,6 @@ For an overview, see the paper:
    
 .. __: http://link 
 
----
-
-To install run :code:`pip install smolyak-1.0.whl`
 
 ---
 

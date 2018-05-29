@@ -24,7 +24,7 @@ class MultiIndex(object):
         if mi:
             for dim,v in mi if sparse else enumerate(mi):
                 self[dim]=v
-                
+    
     def sparse_tuple(self):
         '''
         Return non-zero entries together with their dimensions.
@@ -48,6 +48,12 @@ class MultiIndex(object):
         '''
         return sorted(list(self.multiindex.keys()))
         
+    def max_dim(self):
+        '''
+        Return maximal active dimension, e.g. (1,0,1) returns 3 and (1,0,0) returns 1 and (0,) returns 0
+        '''
+        return max(self.active_dims()) + 1 if self.multiindex else 0 
+
     def mod(self, mod):
         r'''
         Return copy with zeroes in dimensions specified by :code:`mod` (=modulo)
@@ -386,25 +392,35 @@ def get_admissible_indices(admissible, dim=-1):
     :return: :math:`\mathcal{I}:=\{\mathbf{k}: \verb|admissible|(\mathbf{k})=\text{True}\}`
     :rtype: List
     '''
+    if dim==0:
+        if admissible(MultiIndex()):
+            return [MultiIndex()]
+        else:
+            return []
     mis = []
-    def next_admissible(admissible, mi, dim):
-        if dim>0 and admissible(mi + kronecker(0)):
-            return mi + kronecker(0)
+    def next_admissible(mi, dim, shift = 0):
+        test = (mi + kronecker(0)).shifted(shift)
+        if admissible(test):
+            return test 
         else:
             if dim == 1 or (dim < 1 and mi == MultiIndex()):
                 return False
             else:
-                tail = next_admissible(lambda mi: admissible(mi.shifted()), mi.shifted(-1), dim - 1)
-                if tail:
-                    return tail.shifted();
-                else:
-                    return False
+                return next_admissible(mi.shifted(-1), dim - 1,shift = shift+1)
     if admissible(MultiIndex()):
         mis.append(MultiIndex())
-        while next_admissible(admissible, mis[-1], dim):
-            mis.append(next_admissible(admissible, mis[-1], dim))
+        while True:
+            na = next_admissible(mis[-1], dim)
+            if na:
+                mis.append(na)
+            else:
+                break
     return mis
 
+if __name__=='__main__':
+    a = get_admissible_indices(lambda mi: sum(mi.full_tuple())<3 and max(mi.active_dims() if mi!=MultiIndex() else [0])<4, 2)
+    print(a)
+    
 def rectangle(L=None, n=None):
     if not hasattr(L, '__contains__'):
         if n is None:
@@ -452,8 +468,10 @@ def simplex(L, weights=None, n=None):
     '''
     Returns n-dimensional simplex :math:`\{(k_1,\dots,k_n)\in\mathbb{N}^n : k\dot w \leq L\}`  
     '''
+    check_shortcut = False
     if weights is None:
         weights = 1
+        check_shortcut = True
     if not hasattr(weights, '__contains__'):
         if not n:
             raise ValueError('Specify either list of weights sides or n')
@@ -465,6 +483,8 @@ def simplex(L, weights=None, n=None):
                 raise ValueError('n does not match length of L')
         else:
             n = len(weights)
+    if check_shortcut and L==1:
+        return [MultiIndex()]+[kronecker(dim) for dim in range(n)]
     def admissible(mi):
             return sum([weights[dim] * v for dim, v in mi]) <= L
     return get_admissible_indices(admissible, n)

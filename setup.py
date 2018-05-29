@@ -7,6 +7,6 @@ setup(name='smolyak',
       long_description=open('README.rst').read(),
       author='Soeren Wolfers',
       author_email='soeren.wolfers@gmail.com',
-      packages=find_packages(exclude=['*tests']),#,'examples*']),
+      packages=find_packages(exclude=['*tests','*docs']),#,'examples*']),
       install_requires=['numpy','scipy','swutil']
 )
