@@ -1,5 +1,13 @@
 '''
 Sparse approximation using Smolyak's algorithm
+
+Usage:
+    1) Setup a Decomposition instance that computes elements in the
+    decomposition and provides auxiliary information about them.
+        Here, it can be helpful to use MixedDifferences from the module indices
+        which turns regular algorithms in the form requires for sparse
+        approximations
+    2) Pass that instance to a SparseApproximation instance
 '''
 from __future__ import division
 import numpy as np
@@ -21,7 +29,7 @@ import itertools
 from swutil import plots
 # TODO: Put online
 
-class _Factor():
+class _Factor:
     @validate_args('multipliers>(~func,~dims) multipliers==n_acc',warnings=False)
     def __init__(self,
                  func:Function,
@@ -67,7 +75,7 @@ class ContributionFunction(_Factor):
         if self.bundled:
             raise ValueError('Contribution function cannot be bundled')
 
-class Decomposition():
+class Decomposition:
     @validate_args('~work_multipliers|~work_function',
                    '~contribution_multipliers|~contribution_function',
                    'bundled_dims>bundled',
@@ -218,7 +226,7 @@ class Decomposition():
         else:
             self.next_dims = next_dims
 
-class SparseApproximation():
+class SparseApproximation:
     r'''
     Sparse approximation based on multi-index decomposition.
 
@@ -548,7 +556,7 @@ class SparseApproximation():
             raise ValueError("Decomposition didn't return work")
         self.storage.update_estimates(mis_update, mi_update, object_slice, contribution, work_model, runtime, external_work_factor)
 
-class _Estimator():
+class _Estimator:
     
     def __init__(self, dims_ignore, exponent_max, exponent_min, md_correction=None, init_exponents=None):
         self.quantities = {}
@@ -634,7 +642,7 @@ class _Estimator():
             else:
                 return 1
 
-class _Storage():
+class _Storage:
     def __init__(self, decomposition):
         self.WORK_EXPONENT_MAX = 10
         self.WORK_EXPONENT_MIN = 0

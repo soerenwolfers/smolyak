@@ -11,10 +11,5 @@ For an overview, see the paper:
 
    Tempone R., Wolfers S. (2017). `Smolyak's algorithm: A powerful black box for the acceleration of scientific computations`__.
    
-.. __: http://link 
-
-
----
-
-For usage instructions check the `documentation </doc/_build/index.html>_`
+.. __: https://arxiv.org/abs/1703.08872 
 

@@ -1,4 +1,6 @@
 *-blx.bib
+MANIFEST.in
+examples/
 experiments/
 /smolyak/experiments/*
 /smolyak/experiments

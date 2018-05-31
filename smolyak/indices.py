@@ -6,7 +6,7 @@ import numpy as np
 from swutil.collections import DefaultDict
 from swutil.validation import Integer
 
-class MultiIndex(object):
+class MultiIndex:
     '''
     Sparse multi-index representation.
     
@@ -222,7 +222,7 @@ class MultiIndex(object):
             new[dim] = -new[dim]
         return new
 
-class DCSet(object):
+class DCSet:
     '''
     Stores downward closed sets of multi-indices and corresponding 
     admissible multi-indices.
@@ -307,7 +307,7 @@ def kronecker(dim):
     mi[dim] = 1
     return mi
     
-class MultiIndexDict(object): 
+class MultiIndexDict: 
     '''
     Dictionary with SparseIndices as keys
     
@@ -507,10 +507,10 @@ def tensor_product(sets,ns):
     shifts = [0,*np.cumsum(ns)]
     return [sum(mi.shifted(shifts[k]) for k,mi in enumerate(mis)) for mis in itertools.product(*sets)]
 
-class MixedDifferences(object):
+class MixedDifferences:
     r'''
     Provided a function :math:`f\colon\mathbb{N}^n \to Y`, instances of this class 
-    represent the associated first order mixed differences
+    represent the associated mixed differences
     :math:`\Delta_{\text{mix}} f\colon \mathbb{N}^n \to Y`
     '''
     def reset(self):
