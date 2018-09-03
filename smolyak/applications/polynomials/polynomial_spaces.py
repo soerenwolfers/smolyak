@@ -60,7 +60,7 @@ class PolynomialSpace():
         W = W.reshape((W.size, 1))
         R = B.transpose().dot(Y * W)
         G = B.transpose().dot(B * W)
-        if self.warnings and np.linalg.cond(G) > 100:
+        if self.warnings and np.linalg.cond(G) > 3:
             warnings.warn('Ill conditioned Gramian matrix encountered') 
         if G.shape[0]>0:
             coefficients = solve(G, R, sym_pos=True)

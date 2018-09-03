@@ -22,8 +22,11 @@ class MultiIndex:
         '''
         self.multiindex = dict()
         if mi:
-            for dim,v in mi if sparse else enumerate(mi):
-                self[dim]=v
+            if Integer.valid(mi):
+                self[0] = mi
+            else:
+                for dim,v in mi if sparse else enumerate(mi):
+                    self[dim]=v
     
     def sparse_tuple(self):
         '''

@@ -10,7 +10,6 @@ from smolyak.applications.polynomials.polynomial_spaces import PolynomialSpace
 class PolynomialApproximation(object):
     def __init__(self,ps,coefficients=None,basis = None):
         '''
-        
         :param polynomial_space: Polynomial subspace in which approximation lives
         :type polynomial_space: PolynomialSubspace
         :param coefficients: Coefficients with respect to basis determined by
@@ -64,8 +63,7 @@ class PolynomialApproximation(object):
         :return: Values of approximation at specified locations
         '''
         T = self.polynomial_space.evaluate_basis(X,derivative=derivative)
-        print(T.shape)
-        return T.dot(np.array([self.coefficients[pol] for pol in self.polynomial_space.basis]).reshape(-1, 1))
+        return T.dot(np.array([self.coefficients[pol] for pol in self.polynomial_space.basis]).reshape(-1))
     
     def norm(self, pols=None):
         '''
@@ -118,5 +116,7 @@ class PolynomialApproximation(object):
             Z = grid_evaluation(X, Y, self)
             ax = fig.gca(projection='3d')
             ax.plot_surface(X, Y, Z)
+        else:
+            raise ValueError('Cannot plot {}-dimensional function'.format(self.polynomial_space.get_c_var()))
         fig.suptitle('Polynomial approximation')
         

@@ -21,3 +21,4 @@ smolyak includes the following modules and packages:
     
 '''
 from .smolyak import SparseApproximation, Decomposition
+from . import indices

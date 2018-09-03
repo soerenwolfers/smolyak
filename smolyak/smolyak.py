@@ -26,11 +26,12 @@ from swutil.validation import NotPassed, Positive, Integer, Float, validate_args
     Nonnegative, Instance, DefaultGenerator, Function, Iterable, Bool, Dict, \
     List, Equals, InInterval, Arg, Passed, In
 import itertools
+from smolyak.applications.polynomials import WeightedPolynomialApproximator
 from swutil import plots
 # TODO: Put online
 
 class _Factor:
-    @validate_args('multipliers>(~func,~dims) multipliers==n_acc',warnings=False)
+    @validate_args('multipliers>(~func,~dims) multipliers==n',warnings=False)
     def __init__(self,
                  func:Function,
                  multipliers:Dict(value_spec=Positive & Float),
@@ -79,10 +80,10 @@ class Decomposition:
     @validate_args('~work_multipliers|~work_function',
                    '~contribution_multipliers|~contribution_function',
                    'bundled_dims>bundled',
-                   Arg('init_dims|next_dims', Passed) > Arg('n_acc', Equals(math.inf)),
+                   Arg('init_dims|next_dims', Passed) > Arg('n', Equals(math.inf)),
                    warnings=False)
     def __init__(self,
-                 func:Function,
+                 Delta,
                  n:Positive & Integer,
                  work_multipliers:Dict(value_spec=InInterval(l=1, lo=False), lenience=2),
                  work_function:Instance(WorkFunction),
@@ -99,12 +100,12 @@ class Decomposition:
                  stores_approximation:Bool=False,
                  reset:Function=NotPassed):
         r'''        
-        :param func: Computes decomposition terms.
+        :param Delta: Computes decomposition terms.
             In the most basic form, a single multi-index is passed to 
-            :code:`func` and a single value, which represents the corresponding 
+            :code:`Delta` and a single value, which represents the corresponding 
             decomposition term and supports vector space operations, is expected. 
             
-            If :code:`returns_work == True`, :code:`func` must return (value,work) (or only work if stores_approximation),
+            If :code:`returns_work == True`, :code:`Delta` must return (value,work) (or only work if stores_approximation),
             where work is a single float representing some abstract type of work
             that was required for the computation of value. Otherwise, algorithms
             are guided by runtime.
@@ -118,21 +119,21 @@ class Decomposition:
             assess their contribution, or they may implement norm() methods. 
             
             If both :code:`returns_contributions == True` and :code:`returns_work`
-            then :code:`func` must return (value,work,contribution) (or only (work,contribution) in case of external storage)
+            then :code:`Delta` must return (value,work,contribution) (or only (work,contribution) in case of external storage)
             
-            If :code:`bundled == True`, then :code:`func` is passed an iterable of multi-indices
+            If :code:`bundled == True`, then :code:`Delta` is passed an iterable of multi-indices
             (which agree in the dimensions for which :code:`bundled_dims` returns True) must return 
             the sum of the corresponding decomposition elements.
             This may be useful for parallelization, or for problems where joint
             computation of decomposition elements is analytically more efficient.
             
             If :code:`stores_approximation == True`, no n_results is required and decomposition terms
-            are expected to be stored by :code:`func` itself. Each call 
+            are expected to be stored by :code:`Delta` itself. Each call 
             will contain the full multi-index set representing the current approximation.
             
-        :type func:  Function.
-        :param n_acc: Number of discretization parameters
-        :type n_acc: Integer, including math.inf (or 'inf') 
+        :type Delta:  Function.
+        :param n: Number of discretization parameters
+        :type n: Integer, including math.inf (or 'inf') 
         :param work_multipliers: Specify factor by which work increases if index is increased in a given dimension
         :type work_multipliers: Dict
         :param work_function: If work is more complex, use work_function instead of work_multipliers to compute
@@ -147,15 +148,15 @@ class Decomposition:
         :type returns_work: Boolean
         :param returns_contributions: Does the decomposition come with its own contribution specification? 
         :type returns_contributions: Boolean  
-        :param init_dims: Initial dimensions used to create multi-index set. Defaults to :code:`range(n_acc)`. However,
-            for large or infinite `n_acc`, it may make sense (or be necessary) to restrict this initially. 
+        :param init_dims: Initial dimensions used to create multi-index set. Defaults to :code:`range(n)`. However,
+            for large or infinite `n`, it may make sense (or be necessary) to restrict this initially. 
             Each time a multi-index with non-zero entry in one of these initial dimensions, say j,  is selected, 
             new dimensions are added, according to output of :code:`next_dims(j)`
         :type init_dims: Integer or list of integers
         :param next_dims: Assigns to each dimension a list of child dimensions (see above)
         :type next_dims: :math:`\mathbb{N}\to 2^{\mathbb{N}}`
         :param: bundled: To be used when the decomposition terms cannot be computed independent of 
-           each other. In this case, :code:`func` is called with subsets of :math:`\mathcal{I}` whose entries agree
+           each other. In this case, :code:`Delta` is called with subsets of :math:`\mathcal{I}` whose entries agree
            except for the dimensions specified in bundled_dims
         :type bundled: Boolean
         :param bundled_dims: Specifies dimensions used for bundling
@@ -163,36 +164,48 @@ class Decomposition:
         :param kronecker_exponents: For infinite dimensional problems, the 
             contribution of Kronecker multi-index e_j is estimated as exp(kronecker_exponents(j))
         :type kronecker_exponents: Function from integers to negative reals  
-        :param stores_approximation: Specifies whether approximation is computed externally. If True, :code:`func` is called multiple times 
+        :param stores_approximation: Specifies whether approximation is computed externally. If True, :code:`Delta` is called multiple times 
             with a SparseIndex as argument (or a list of SparseIndices if :code:`bundled_dims` is True as well) and must collect the associated
-            decomposition terms itself. If False, :code:`func` is also called multiple times with a SparseIndex (or a list of SparseIndices)
+            decomposition terms itself. If False, :code:`Delta` is also called multiple times with a SparseIndex (or a list of SparseIndices)
             and must return the associated decomposition terms, which are then stored within the SparseApproximator instance
         :type stores_approximation: Boolean
         :param reset: If stores_approximation, this function will reset the externally stored approximation
         :type reset: Function
         '''
-        self.func = func
-        self.n_acc = n
-        self.returns_work = returns_work
-        self.returns_contributions = returns_contributions
-        self.stores_approximation = stores_approximation
-        self.kronecker_exponents = kronecker_exponents
-        self.reset = reset
+        if isinstance(Delta,WeightedPolynomialApproximator):
+            self.Delta = Delta.update_approximation
+            self.n = Delta.n_acc+Delta.n#self.n has different meaning than Delta.n_acc
+            self.returns_work = True#TODO: complain if these are already specified
+            self.returns_contributions = True
+            self.stores_approximation = True
+            self.kronecker_exponents = kronecker_exponents 
+            self.reset = Delta.reset
+            self._set_is_bundled(True,Delta.bundled_dims)
+            self._set_work(work_multipliers,work_function)
+            self._set_contribution(contribution_multipliers,contribution_function)
+        else:
+            self.Delta = Delta
+            self.n = n
+            self.returns_work = returns_work
+            self.returns_contributions = returns_contributions
+            self.stores_approximation = stores_approximation
+            self.kronecker_exponents = kronecker_exponents
+            self.reset = reset
+            self._set_is_bundled(bundled, bundled_dims)
+            self._set_work(work_multipliers, work_function)
+            self._set_contribution(contribution_multipliers, contribution_function)
         #self.is_md = is_md
-        if math.isinf(self.n_acc):
+        if math.isinf(self.n):
             if not init_dims:
                 init_dims = [0]
             self.init_dims = init_dims
             self._set_next_dims(next_dims)  
         else:
-            self.init_dims = range(self.n_acc)
-        self._set_is_bundled(bundled, bundled_dims)
-        self._set_work(work_multipliers, work_function)
-        self._set_contribution(contribution_multipliers, contribution_function)
+            self.init_dims = range(self.n)
         
     def _set_work(self, work_multipliers, work_function):
         if work_multipliers:
-            self.work_function = WorkFunction(multipliers=work_multipliers, n=self.n_acc,bundled=self.bundled)
+            self.work_function = WorkFunction(multipliers=work_multipliers, n=self.n,bundled=self.bundled)
         elif work_function:
             if work_function.bundled==self.bundled:
                 self.work_function = work_function
@@ -207,7 +220,7 @@ class Decomposition:
         
     def _set_contribution(self, contribution_multipliers, contribution_function):
         if contribution_multipliers:
-            self.contribution_function = ContributionFunction(multipliers=contribution_multipliers, n=self.n_acc,bundled = False)
+            self.contribution_function = ContributionFunction(multipliers=contribution_multipliers, n=self.n,bundled = False)
         elif contribution_function:
             self.contribution_function = contribution_function
         else:
@@ -221,7 +234,7 @@ class Decomposition:
             self.bundled_dims = bundled_dims
          
     def _set_next_dims(self, next_dims):
-        if (not next_dims) and self.n_acc == Inf:
+        if (not next_dims) and self.n == Inf:
             self.next_dims = lambda dim: [dim + 1] if dim + 1 not in self.init_dims else []
         else:
             self.next_dims = next_dims
@@ -230,17 +243,17 @@ class SparseApproximation:
     r'''
     Sparse approximation based on multi-index decomposition.
 
-    Given a decomposition of a vector :math:`f_{\infty}` as    
+    Given a decomposition of :math:`f_{\infty}` as    
     .. math::
     
-        f_{\infty}=\sum_{\mathbf{k}\in\mathbb{N}^{n_acc}} (\Delta f)(\mathbf{k}),
+        f_{\infty}=\sum_{\mathbf{k}\in\mathbb{N}^{n}} (\Delta f)(\mathbf{k}),
         
     this class computes and stores approximations of the form
     .. math:: 
     
        \mathcal{S}_{\mathcal{I}}f:=\sum_{\mathbf{k}\in\mathcal{I}} (\Delta f)(\mathbf{k}),
     
-    for finite index sets :math:`\mathcal{I}\subset\mathbb{R}^n_acc`. 
+    for finite index sets :math:`\mathcal{I}\subset\mathbb{R}^n`. 
 
     Currently supported ways to specify :math:`\mathcal{I}` are:
      :code:`update_approximation`, which requires passing the multi-index set,
@@ -248,16 +261,107 @@ class SparseApproximation:
      :code:`expand_apriori`, which constructs the set based on a-priori knowledge about work and contribution of the decomposition terms, and
      :code:`expand_continuation`, which constructs the set by a combination of first learning the behavior of work and contribution, and then using this knowledge to create optimal sets.
     '''
-    @validate_args(warnings=False)
-    def __init__(self, decomposition:Instance(Decomposition), log:Instance(Log)=DefaultGenerator(lambda: Log(print_filter=False))):
+    @validate_args('~work_multipliers|~work_function',
+                   '~contribution_multipliers|~contribution_function',
+                   'bundled_dims>bundled',
+                   Arg('init_dims|next_dims', Passed) > Arg('n', Equals(math.inf)),
+                   warnings=False)
+    def __init__(self,
+                 Delta,
+                 n:Positive & Integer,
+                 work_multipliers:Dict(value_spec=InInterval(l=1, lo=False), lenience=2),
+                 work_function:Instance(WorkFunction),
+                 contribution_multipliers:Dict(value_spec=InInterval(l=0, lo=True, r=1, ro=True), lenience=2),
+                 contribution_function:Instance(ContributionFunction),
+                 returns_work:Bool=False,
+                 returns_contributions:Bool=False,
+                 init_dims:List(Nonnegative & Integer, lenience=2)=NotPassed,
+                 next_dims:Function=NotPassed,
+                 bundled:Bool=False,
+                 bundled_dims:Function(value_spec=Bool) | List(value_spec=Integer)=NotPassed,
+                 #is_md:Bool=False,
+                 kronecker_exponents:Function(value_spec=Nonnegative & Float)=NotPassed,
+                 stores_approximation:Bool=False,
+                 reset:Function=NotPassed):
         r'''        
-        :param decomposition: Decomposition of an approximation problem
-        :type decomposition: Decomposition
-        :param log: Log object used for logging
+        :param Delta: Computes decomposition terms.
+            In the most basic form, a single multi-index is passed to 
+            :code:`Delta` and a single value, which represents the corresponding 
+            decomposition term and supports vector space operations, is expected. 
+            
+            If :code:`returns_work == True`, :code:`Delta` must return (value,work) (or only work if stores_approximation),
+            where work is a single float representing some abstract type of work
+            that was required for the computation of value. Otherwise, algorithms
+            are guided by runtime.
+            
+            If :code:`returns_contributions == True`, return (value,contribution) (or only 
+            contribution if stores_approximation), where contribution is:
+                *a single float if not stores_approximation and not bundled_dims or else
+                *a dictionary  {(mi,contribution(float) for mi in bundle}
+                    where bundle is the multi-index set that has been passed
+            Otherwise, the return values will be normed by means of np.linalg.norm to
+            assess their contribution, or they may implement norm() methods. 
+            
+            If both :code:`returns_contributions == True` and :code:`returns_work`
+            then :code:`Delta` must return (value,work,contribution) (or only (work,contribution) in case of external storage)
+            
+            If :code:`bundled == True`, then :code:`Delta` is passed an iterable of multi-indices
+            (which agree in the dimensions for which :code:`bundled_dims` returns True) must return 
+            the sum of the corresponding decomposition elements.
+            This may be useful for parallelization, or for problems where joint
+            computation of decomposition elements is analytically more efficient.
+            
+            If :code:`stores_approximation == True`, no n_results is required and decomposition terms
+            are expected to be stored by :code:`Delta` itself. Each call 
+            will contain the full multi-index set representing the current approximation.
+            
+        :type Delta:  Function.
+        :param n: Number of discretization parameters
+        :type n: Integer, including math.inf (or 'inf') 
+        :param work_multipliers: Specify factor by which work increases if index is increased in a given dimension
+        :type work_multipliers: Dict
+        :param work_function: If work is more complex, use work_function instead of work_multipliers to compute
+            expected work associated with a given multi-index
+        :type work_function: Function MultiIndex->Positive reals
+        :param contribution_multipliers: Specify factor by which contribution decreases if index is increased in a given dimension
+        :type work_multipliers: Dict
+        :param work_function: If contribution is more complex, use contribution_function instead of contribution_multipliers to compute
+            expected contribution of a given multi-index
+        :type work_function: Function MultiIndex->Positive reals
+        :param returns_work: Does the decomposition come with its own cost specification?
+        :type returns_work: Boolean
+        :param returns_contributions: Does the decomposition come with its own contribution specification? 
+        :type returns_contributions: Boolean  
+        :param init_dims: Initial dimensions used to create multi-index set. Defaults to :code:`range(n)`. However,
+            for large or infinite `n`, it may make sense (or be necessary) to restrict this initially. 
+            Each time a multi-index with non-zero entry in one of these initial dimensions, say j,  is selected, 
+            new dimensions are added, according to output of :code:`next_dims(j)`
+        :type init_dims: Integer or list of integers
+        :param next_dims: Assigns to each dimension a list of child dimensions (see above)
+        :type next_dims: :math:`\mathbb{N}\to 2^{\mathbb{N}}`
+        :param: bundled: To be used when the decomposition terms cannot be computed independent of 
+           each other. In this case, :code:`Delta` is called with subsets of :math:`\mathcal{I}` whose entries agree
+           except for the dimensions specified in bundled_dims
+        :type bundled: Boolean
+        :param bundled_dims: Specifies dimensions used for bundling
+        :type bundled_dims: :math:`\mathbb{N}\to\{\text{True},\text{False}\}` or list of dimensions
+        :param kronecker_exponents: For infinite dimensional problems, the 
+            contribution of Kronecker multi-index e_j is estimated as exp(kronecker_exponents(j))
+        :type kronecker_exponents: Function from integers to negative reals  
+        :param stores_approximation: Specifies whether approximation is computed externally. If True, :code:`Delta` is called multiple times 
+            with a SparseIndex as argument (or a list of SparseIndices if :code:`bundled_dims` is True as well) and must collect the associated
+            decomposition terms itself. If False, :code:`Delta` is also called multiple times with a SparseIndex (or a list of SparseIndices)
+            and must return the associated decomposition terms, which are then stored within the SparseApproximator instance
+        :type stores_approximation: Boolean
+        :param reset: If stores_approximation, this function will reset the externally stored approximation
+        :type reset: Function
         '''
-        self.decomposition = decomposition
-        self.log = log
-        self.reset()
+        self.decomposition = Decomposition(Delta,n,work_multipliers,work_function,
+            contribution_multipliers,contribution_function,returns_work,
+            returns_contributions, init_dims,next_dims,bundled,bundled_dims,kronecker_exponents,
+            stores_approximation,reset)
+        self.log = Log(print_filter=False)
+        self.reset()#To initialize everyting
         
     @validate_args('L|T', warnings=False)
     def expand_continuation(self , L:Positive&Integer=np.Inf, T:Positive&Float=np.Inf, L_init:Nonnegative&Integer=2,reset:Bool=True):
@@ -276,25 +380,25 @@ class SparseApproximation:
         tic_init = timeit.default_timer()
         if self.decomposition.stores_approximation and not self.decomposition.reset:
                 raise ValueError('If approximation is stored externally, decomposition needs to specify reset function')
-        work_exponents, contribution_exponents = np.ones((2, self.decomposition.n_acc))  
+        work_exponents, contribution_exponents = np.ones((2, self.decomposition.n))  
         C = 1
         rho = lambda: max(work_exponents / contribution_exponents)
         mu = lambda: rho() / (1 + rho())
         estimated_time = lambda l : C * np.exp(mu() * l)  # only correct with the scaling below
-        work_estimator = self.storage.work_model_estimator if self.decomposition.returns_work else self.storage.runtime_estimator
+        work_estimator = self.data.work_model_estimator if self.decomposition.returns_work else self.data.runtime_estimator
         done_something = False
         for l in (range(L_init,L) if not math.isinf(L) else itertools.count(L_init)):
-            for i in range(self.decomposition.n_acc):
+            for i in range(self.decomposition.n):
                 if i not in self.decomposition.work_function.multipliers and work_estimator.ratios[i]:
                     work_exponents[i] = self._get_work_exponent(i)
-                if i not in self.decomposition.work_function.multipliers and self.storage.contribution_estimator.ratios[i]:
+                if i not in self.decomposition.work_function.multipliers and self.data.contribution_estimator.ratios[i]:
                     contribution_exponents[i] = self._get_contribution_exponent(i)
             if reset: 
                 self.reset()
             tic_level = timeit.default_timer()
-            scale = min(work_exponents[dim] + contribution_exponents[dim] for dim in range(self.decomposition.n_acc))
-            mis = indices.simplex(L=l, weights=(work_exponents + contribution_exponents) / scale, n=self.decomposition.n_acc)
-            if not set(mis)<set(self.storage.mis.mis):#in particular, always when reset==True
+            scale = min(work_exponents[dim] + contribution_exponents[dim] for dim in range(self.decomposition.n))
+            mis = indices.simplex(L=l, weights=(work_exponents + contribution_exponents) / scale, n=self.decomposition.n)
+            if not set(mis)<set(self.data.mis.mis):#in particular, always when reset==True
                 self.expand_by_indices(mis)
                 done_something = True
             observed_time = timeit.default_timer() - tic_level
@@ -324,17 +428,17 @@ class SparseApproximation:
         if reset and self.decomposition.stores_approximation and not self.decomposition.reset:
             raise ValueError('If approximation is stored externally, decomposition needs to specify reset function')
         def admissible(mi,l):
-                return self.storage.profit_estimate(mi) ** (-1) <= np.exp(scale * (l + 1e-6))
+                return self.data.profit_estimate(mi) ** (-1) <= np.exp(scale * (l + 1e-6))
         done_something = False
         for l in ([L] if Passed(L) else itertools.count()):
             if reset:
                 self.reset()
             tic_level = timeit.default_timer()
             try:
-                mis = get_admissible_indices(lambda mi: admissible(mi,l), self.decomposition.n_acc)
+                mis = get_admissible_indices(lambda mi: admissible(mi,l), self.decomposition.n)
             except KeyError:
                 raise KeyError('Did you specify the work for all dimensions?')
-            if not mis < self.storage.mis.mis:
+            if not mis < self.data.mis.mis:
                 self.expand_by_indices(mis)
                 done_something = True
             if Passed(T) and (timeit.default_timer() - tic_init) + (timeit.default_timer() - tic_level) > T:#Crude estimate: Next level as long as current one
@@ -351,7 +455,7 @@ class SparseApproximation:
         These estimates are based on neighbors that are already in the set :math:`\mathcal{I}`,
         unless they are specified in :code:`contribution_factors` and :code:`work_factors`.
         If user defines :code:`have_work_factor` and :code:`have_contribution_factor` 
-        that only estimates for some of the :code:`n_acc` involved parameters are available, 
+        that only estimates for some of the :code:`n` involved parameters are available, 
         then the estimates from :code:`contribution_factor` and :code:`work_factor` for those parameters
         are combined with neighbor estimates for the remaining parameters.
         
@@ -370,9 +474,9 @@ class SparseApproximation:
         tic_init = timeit.default_timer()
         for _ in (range(N) if Passed(N) else itertools.count()):
             tic = timeit.default_timer()
-            mi_update = max(self.storage.mis.candidates, key=lambda mi: self.storage.profit_estimate(mi))
+            mi_update = max(self.data.mis.candidates, key=lambda mi: self.data.profit_estimate(mi))
             self._expand(mi_update)
-            if self.storage.runtimes[mi_update] < (timeit.default_timer() - tic) / 2.:
+            if self.data.runtimes[mi_update] < (timeit.default_timer() - tic) / 2.:
                 warnings.warn('Large overhead. Reparametrize decomposition?')
             if Passed(T) and (timeit.default_timer() - tic_init > T or (timeit.default_timer() - tic_init > T / 2. and reset)):
                 break
@@ -385,7 +489,7 @@ class SparseApproximation:
     def reset(self):
         if Passed(self.decomposition.reset):
             self.decomposition.reset()
-        self.storage = _Storage(self.decomposition)
+        self.data = _Data(self.decomposition)
         
     @log_calls    
     def expand_by_indices(self, mis):
@@ -410,25 +514,25 @@ class SparseApproximation:
         if self.decomposition.stores_approximation:
             raise ValueError('Decomposition is stored externally')
         else:
-            return sum([self.storage.object_slices[mi] for mi in self.storage.object_slices])   
+            return sum([self.data.object_slices[mi] for mi in self.data.object_slices])   
     
     def _get_work_exponent(self, dim):
         if not self.decomposition.returns_work:
             raise ValueError('Decomposition does not provide abstract work model')
-        if not self.storage.work_model_estimator.dims_ignore(dim):
-                return self.storage.work_model_estimator.exponents[dim]
+        if not self.data.work_model_estimator.dims_ignore(dim):
+                return self.data.work_model_estimator.exponents[dim]
         else:
             raise KeyError('No work fit for this dimension')
     
     def _get_runtime_exponent(self, dim):
-        if not self.storage.runtime_estimator.dims_ignore(dim):
-            return self.storage.runtime_estimator.exponents[dim]
+        if not self.data.runtime_estimator.dims_ignore(dim):
+            return self.data.runtime_estimator.exponents[dim]
         else:
             raise KeyError('No runtime fit for this dimension')
        
     def _get_contribution_exponent(self, dim):
-        if not self.storage.contribution_estimator.dims_ignore(dim):
-            return -self.storage.contribution_estimator.exponents[dim]
+        if not self.data.contribution_estimator.dims_ignore(dim):
+            return -self.data.contribution_estimator.exponents[dim]
         else:
             raise KeyError('No contribution fit for this dimension') 
     
@@ -442,13 +546,13 @@ class SparseApproximation:
         return np.exp(-self._get_contribution_exponent(dim))
     
     def get_total_work_model(self):
-        return sum(self.storage.work_models._dict.values())
+        return sum(self.data.work_models._dict.values())
     
     def get_total_runtime(self):
-        return sum(self.storage.runtimes._dict.values())
+        return sum(self.data.runtimes._dict.values())
     
     def get_indices(self):
-        return copy.deepcopy(self.storage.mis.mis)
+        return copy.deepcopy(self.data.mis.mis)
     
     @validate_args(warnings=False)
     def plot_indices(self, dims:Iterable, weights:In('contribution','work_model','runtime','contribution/work_model','contribution/runtime',False)=False, percentiles:Positive & Integer=4):
@@ -461,26 +565,26 @@ class SparseApproximation:
         :type perentiles: Integer
         '''
         if NotPassed(dims):
-            dims = list(self.storage.mis.active_dims)
+            dims = list(self.data.mis.active_dims)
         if not weights:
             percentiles = 1
             weight_dict = None
         elif weights == 'contribution':
-            weight_dict = {mi: self.storage.contributions[mi] for mi in self.get_indices()}
+            weight_dict = {mi: self.data.contributions[mi] for mi in self.get_indices()}
         elif weights == 'work_model':
             if not self.decomposition.returns_work:
                 raise ValueError('Decomposition does not provide abstract work model')
-            weight_dict = {mi: self.storage.work_models[mi] for mi in self.get_indices()}
+            weight_dict = {mi: self.data.work_models[mi] for mi in self.get_indices()}
         elif weights == 'runtime':
-            weight_dict = {mi: self.storage.runtimes[mi] for mi in self.get_indices()}
+            weight_dict = {mi: self.data.runtimes[mi] for mi in self.get_indices()}
         elif weights == 'contribution/work_model':
             assert(self.decomposition.returns_work)
-            weight_dict = {mi:self.storage.contributions[mi] / self.storage.work_models[mi] for mi in self.get_indices()}
+            weight_dict = {mi:self.data.contributions[mi] / self.data.work_models[mi] for mi in self.get_indices()}
         elif weights == 'contribution/runtime':
-            weight_dict = {mi: self.storage.contributions[mi] / self.storage.runtimes[mi] for mi in self.get_indices()}
+            weight_dict = {mi: self.data.contributions[mi] / self.data.runtimes[mi] for mi in self.get_indices()}
         else: 
             raise ValueError('Cannot use weights {}'.format(weights))
-        plots.plot_indices(mis=self.get_indices(), dims=dims, weight_dict=weight_dict, N_q=percentiles) 
+        plots.plot_indices(mis=self.get_indices(), dims=dims, weights=weight_dict, groups=percentiles) 
           
           
     @log_calls
@@ -498,25 +602,24 @@ class SparseApproximation:
             if NotPassed(mi_update):
                 mi_update = mis_update[0]
             else:
-                mis_update = indices.get_bundle(mi_update, self.storage.mis, self.decomposition.bundled_dims) + [mi_update]
+                mis_update = indices.get_bundle(mi_update, self.data.mis, self.decomposition.bundled_dims) + [mi_update]
         else:
             if Passed(mis_update):
                 raise ValueError('Only specify mi_update')
             mis_update = [mi_update]
-        if not self.decomposition.stores_approximation and not self.decomposition.func:  # Dry run
+        if not self.decomposition.stores_approximation and not self.decomposition.Delta:  # Dry run
             return  
         if self.decomposition.bundled:
             external_work_factor = self.decomposition.work_function(mis_update) # Want to be able to provide work function with whole bundle without checking what is actually new and then asking each of those separately, thats why it is required that work_function covers all bundled dimensions
         else:
             external_work_factor = self.decomposition.work_function(mi_update)
-        self.storage.expand(mis_update)
-        
+        self.data.expand(mis_update)
         if self.decomposition.stores_approximation:
-            argument = self.storage.mis.mis
+            argument = self.data.mis.mis
         else:
             argument = mis_update if self.decomposition.bundled else mi_update
         tic = timeit.default_timer()
-        output = self.decomposition.func(argument) # Always provide full set, leave it to external to reuse computations or not 
+        output = self.decomposition.Delta(argument) # Always provide full set, leave it to external to reuse computations or not 
         runtime = timeit.default_timer() - tic
         n_arg = sum(map(int, [not self.decomposition.stores_approximation, self.decomposition.returns_work, self.decomposition.returns_contributions]))  # Possible outputs: Decomposition term, work, contribution
         if n_arg == 1 and not isinstance(output, tuple):  # Allow user to not return tuples if not necessary
@@ -531,7 +634,7 @@ class SparseApproximation:
         elif not self.decomposition.returns_work and self.decomposition.returns_contributions:  # Remaining 1 output
             contribution = output[0]
         if self.decomposition.returns_contributions:  # User decides what contribution means
-            if not self.decomposition.bundled_dims:  # Allow user to not return dictionary if not_bundled (which means user is only passed single multi-index)
+            if not self.decomposition.bundled_dims and not Dict.valid(contribution):  # Allow user to not return dictionary if not_bundled (which means user is only passed single multi-index)
                 contribution = {mi_update: contribution}
         elif not self.decomposition.stores_approximation:  # If approximation is stored here instead of by user, try to figure out contribution
             try:
@@ -554,10 +657,9 @@ class SparseApproximation:
                 raise ValueError('Contributions did not match multi-index set')
         if self.decomposition.returns_work and work_model == None:
             raise ValueError("Decomposition didn't return work")
-        self.storage.update_estimates(mis_update, mi_update, object_slice, contribution, work_model, runtime, external_work_factor)
+        self.data.update_estimates(mis_update, mi_update, object_slice, contribution, work_model, runtime, external_work_factor)
 
 class _Estimator:
-    
     def __init__(self, dims_ignore, exponent_max, exponent_min, md_correction=None, init_exponents=None):
         self.quantities = {}
         self.dims_ignore = dims_ignore
@@ -582,7 +684,8 @@ class _Estimator:
     def __setitem__(self, mi, q):
         self.active_dims.update(set(mi.active_dims()))
         mi = mi.mod(self.dims_ignore)
-        self.quantities[mi] = q  # This should not depend on the ignored dimension. It does in practice, but the override makes sense as it makes sure that up-to-date information is used
+        q = float(q)
+        self.quantities[mi] = q  #two reasons to overwrite: 1) in least squares polynomials for the contribution estimate, the estimate of every single coefficient gets better and better over time 2) in general, for dimensions that are modulod out because their work contribution factor is known, this entry is theoretically the same but practically different. for example, look at MLMC, assume the work factor of the first parameter is theoretically 2. then this stores effectively the cost per sample divided by 2**l. however, this cost is not actually indpendent of the level  
         for dim in [dim for dim in mi.active_dims()]:
             mi_compare = mi - kronecker(dim)
             if self.quantities[mi_compare] > 0:
@@ -592,7 +695,7 @@ class _Estimator:
                 #    if ratio_new < 0:
                 #        ratio_new = 0
             else:
-                ratio_new = np.Inf  
+                ratio_new = np.Inf 
             if len(self.ratios[dim]) < self.FIT_WINDOW:
                 self.ratios[dim].append(ratio_new)
             else:
@@ -605,7 +708,10 @@ class _Estimator:
             estimate = max(min(np.median(ratios), np.exp(self.exponent_max)), np.exp(self.exponent_min))
             c = len(ratios)
             self.exponents[dim] = (self.fallback_exponents[dim] + c * np.log(estimate)) / (c + 1.)
-            self.reliability[dim] = 1. / (1 + 1 / math.sqrt(c) + 10 * np.median(np.abs(ratios - estimate) / ratios))
+            np.seterr(all='ignore')
+            med_vec = np.abs(ratios-estimate)/ratios
+            med_vec = med_vec[~np.isnan(med_vec)] 
+            self.reliability[dim] = 1. / (1 + 1 / math.sqrt(c) + 10 * np.median(med_vec))#Throws warnings when one of ratios is infinity
     
     def _base_estimate(self, mi):
         q_neighbors = []
@@ -642,7 +748,7 @@ class _Estimator:
             else:
                 return 1
 
-class _Storage:
+class _Data:
     def __init__(self, decomposition):
         self.WORK_EXPONENT_MAX = 10
         self.WORK_EXPONENT_MIN = 0
@@ -670,7 +776,7 @@ class _Storage:
         self.contributions = dict()
     
     def expand(self,mis_update):
-        if math.isinf(self.decomposition.n_acc):
+        if math.isinf(self.decomposition.n):
             self._find_new_dims(mis_update)
         self.mis.add_many(mis_update)        
         

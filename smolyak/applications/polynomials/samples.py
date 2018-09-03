@@ -1,6 +1,7 @@
 import numpy as np
 from smolyak.applications.polynomials.orthogonal_polynomials import evaluate_orthonormal_polynomials
 import random
+import math
 
 def arcsine_samples(probability_space,N): 
     def univariate_arcsine_samples(N,interval): 
@@ -31,6 +32,27 @@ def optimal_samples(tensor_polynomial_subspace, N):
         for dim in range(tensor_polynomial_subspace.get_c_var()):
             degree = tensor_polynomial_subspace.basis[j][dim]
             X[i, dim] = sample_from_polynomial(tensor_polynomial_subspace.probability_space.ups[dim],degree)
+    W = tensor_polynomial_subspace.optimal_weights(X)
+    return (X, W)
+
+def samples_per_polynomial(tensor_polynomial_subspace,old_basis,pols,C=2):
+    c_samples=lambda l: int(math.ceil(C  * np.log2(l + 1)))
+    l_old = len(old_basis)
+    N_new = c_samples(len(pols))
+    N_add = N_new - c_samples(l_old)
+    news = np.zeros(len(pols))
+    for j,pol in enumerate(pols):
+        if not pol in old_basis:
+            news[j] = True
+    N = int(N_new * np.sum(news)+N_add*(len(pols)-np.sum(news)))
+    X = np.zeros((N, tensor_polynomial_subspace.get_c_var()))
+    i=0
+    for new,pol in zip(news,pols):
+        for _ in range(N_new if new else N_add):
+            for dim in range(tensor_polynomial_subspace.get_c_var()):
+                degree = pol[dim]
+                X[i, dim] = sample_from_polynomial(tensor_polynomial_subspace.probability_space.ups[dim],degree)
+            i+=1
     W = tensor_polynomial_subspace.optimal_weights(X)
     return (X, W)
 
