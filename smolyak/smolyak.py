@@ -2,33 +2,35 @@
 Sparse approximation using Smolyak's algorithm
 
 Usage:
-    1) Setup a Decomposition instance that computes elements in the
-    decomposition and provides auxiliary information about them.
-        Here, it can be helpful to use MixedDifferences from the module indices
-        which turns regular algorithms in the form requires for sparse
-        approximations
-    2) Pass that instance to a SparseApproximation instance
+    1) Setup a function instance that computes elements in a multi-index
+    decomposition (and possibly auxiliary information about work and 
+    contribution of the computed terms).
+    Here, it can be helpful to use MixedDifferences from the module indices
+    which turns regular algorithms into the form required for sparse
+    approximations
+    2) Pass that function to a SparseApproximator instance, along
+    with information about work and runtime estimates, etc.
 '''
-from __future__ import division
-import numpy as np
-import timeit
-from smolyak.indices import  MultiIndexDict, get_admissible_indices, DCSet, \
-    kronecker
 import copy
 import warnings
 import math
-from smolyak import indices
+import timeit
+import itertools
+
+import numpy as np
+from numpy import Inf
 from swutil.logs import Log
 from swutil.decorators import log_calls
 from swutil.collections import DefaultDict
-from numpy import Inf
 from swutil.validation import NotPassed, Positive, Integer, Float, validate_args, \
     Nonnegative, Instance, DefaultGenerator, Function, Iterable, Bool, Dict, \
     List, Equals, InInterval, Arg, Passed, In
-import itertools
-from smolyak.applications.polynomials import WeightedPolynomialApproximator
 from swutil import plots
-# TODO: Put online
+
+from smolyak.indices import  MultiIndexDict, get_admissible_indices, DCSet, \
+    kronecker, MultiIndex
+from smolyak import indices
+from smolyak.applications.polynomials import PolynomialApproximator
 
 class _Factor:
     @validate_args('multipliers>(~func,~dims) multipliers==n',warnings=False)
@@ -38,8 +40,6 @@ class _Factor:
                  n:Positive & Integer,
                  dims:Function(value_spec=Bool)=lambda dim: True,
                  bundled:Bool=False,
-                 #have_all:Bool=False,
-                 #have_none:Bool=False,
                  ):
         self.bundled = bundled
         if Passed(multipliers):
@@ -60,8 +60,6 @@ class _Factor:
             self.dims = self.multipliers.__contains__
         else:
             self.multipliers = {}
-            #self.have_all = have_all
-            #self.have_non = have_none
             self.func = func
             self.dims = dims 
     def __call__(self, *args):
@@ -95,7 +93,6 @@ class Decomposition:
                  next_dims:Function=NotPassed,
                  bundled:Bool=False,
                  bundled_dims:Function(value_spec=Bool) | List(value_spec=Integer)=NotPassed,
-                 #is_md:Bool=False,
                  kronecker_exponents:Function(value_spec=Nonnegative & Float)=NotPassed,
                  stores_approximation:Bool=False,
                  reset:Function=NotPassed):
@@ -144,9 +141,9 @@ class Decomposition:
         :param work_function: If contribution is more complex, use contribution_function instead of contribution_multipliers to compute
             expected contribution of a given multi-index
         :type work_function: Function MultiIndex->Positive reals
-        :param returns_work: Does the decomposition come with its own cost specification?
+        :param returns_work: Are the deltas returned together with their own work specification?
         :type returns_work: Boolean
-        :param returns_contributions: Does the decomposition come with its own contribution specification? 
+        :param returns_contributions: Are the deltas returned together with their own contribution specification?
         :type returns_contributions: Boolean  
         :param init_dims: Initial dimensions used to create multi-index set. Defaults to :code:`range(n)`. However,
             for large or infinite `n`, it may make sense (or be necessary) to restrict this initially. 
@@ -172,10 +169,13 @@ class Decomposition:
         :param reset: If stores_approximation, this function will reset the externally stored approximation
         :type reset: Function
         '''
-        if isinstance(Delta,WeightedPolynomialApproximator):
+        if isinstance(Delta,PolynomialApproximator):
+            if Passed(n) or Passed(work_function) or returns_work:
+                raise ValueError('Do not specify `n`, `work_function` or `returns_work` to SparseApproximator for polynomial approximation')  
             self.Delta = Delta.update_approximation
-            self.n = Delta.n_acc+Delta.n#self.n has different meaning than Delta.n_acc
-            self.returns_work = True#TODO: complain if these are already specified
+            self.n = Delta.n_acc+Delta.n
+            work_function = WorkFunction(func = Delta.estimated_work, dims = lambda n:n>= Delta.n_acc,bundled=True)
+            self.returns_work = True 
             self.returns_contributions = True
             self.stores_approximation = True
             self.kronecker_exponents = kronecker_exponents 
@@ -194,7 +194,6 @@ class Decomposition:
             self._set_is_bundled(bundled, bundled_dims)
             self._set_work(work_multipliers, work_function)
             self._set_contribution(contribution_multipliers, contribution_function)
-        #self.is_md = is_md
         if math.isinf(self.n):
             if not init_dims:
                 init_dims = [0]
@@ -239,7 +238,7 @@ class Decomposition:
         else:
             self.next_dims = next_dims
 
-class SparseApproximation:
+class SparseApproximator:
     r'''
     Sparse approximation based on multi-index decomposition.
 
@@ -279,7 +278,6 @@ class SparseApproximation:
                  next_dims:Function=NotPassed,
                  bundled:Bool=False,
                  bundled_dims:Function(value_spec=Bool) | List(value_spec=Integer)=NotPassed,
-                 #is_md:Bool=False,
                  kronecker_exponents:Function(value_spec=Nonnegative & Float)=NotPassed,
                  stores_approximation:Bool=False,
                  reset:Function=NotPassed):
@@ -407,7 +405,6 @@ class SparseApproximation:
                 break
         if not done_something:
             warnings.warn("Call of expand_apriori didn't end up expanding multi-index set")    
-        #return work_exponents, contribution_exponents
       
     @validate_args('L^T','reset>T', warnings=False)
     def expand_apriori(self, L:Nonnegative&Integer=NotPassed, scale:Positive&Float=1,T:Positive&Float=NotPassed,reset:Bool = NotPassed):
@@ -422,8 +419,6 @@ class SparseApproximation:
         :param scale: Make larger (>1) or smaller (<1) steps between different values of L
         :type scale: Positive real.
         '''
-        #if not self.decomposition.work_function.have_all or not self.decomposition.contribution_function.have_all:
-        #    raise ValueError('Cannot run nonadaptively unless work is known for all dimensions.')
         tic_init = timeit.default_timer()
         if reset and self.decomposition.stores_approximation and not self.decomposition.reset:
             raise ValueError('If approximation is stored externally, decomposition needs to specify reset function')
@@ -474,7 +469,17 @@ class SparseApproximation:
         tic_init = timeit.default_timer()
         for _ in (range(N) if Passed(N) else itertools.count()):
             tic = timeit.default_timer()
-            mi_update = max(self.data.mis.candidates, key=lambda mi: self.data.profit_estimate(mi))
+            mi_update = None
+            current_mis = self.data.mis.mis
+            if MultiIndex() not in current_mis:
+                mi_update = MultiIndex()
+            elif not math.isinf(self.decomposition.n):
+                for i in range(self.decomposition.n):
+                    unitv = MultiIndex(((i,1),),sparse=True)
+                    if not unitv in current_mis:
+                        mi_update = unitv
+            if mi_update is None:
+                mi_update = max(self.data.mis.candidates, key=lambda mi: self.data.profit_estimate(mi))
             self._expand(mi_update)
             if self.data.runtimes[mi_update] < (timeit.default_timer() - tic) / 2.:
                 warnings.warn('Large overhead. Reparametrize decomposition?')
@@ -484,7 +489,7 @@ class SparseApproximation:
             mis = self.get_indices()
             self.reset()
             self.expand_by_indices(mis)
-    
+
     @log_calls    
     def reset(self):
         if Passed(self.decomposition.reset):
@@ -518,11 +523,12 @@ class SparseApproximation:
     
     def _get_work_exponent(self, dim):
         if not self.decomposition.returns_work:
-            raise ValueError('Decomposition does not provide abstract work model')
+            raise ValueError('Decomposition does not provide abstract work model. Try get_runtime_*')
         if not self.data.work_model_estimator.dims_ignore(dim):
                 return self.data.work_model_estimator.exponents[dim]
         else:
             raise KeyError('No work fit for this dimension')
+        
     
     def _get_runtime_exponent(self, dim):
         if not self.data.runtime_estimator.dims_ignore(dim):
@@ -585,7 +591,6 @@ class SparseApproximation:
         else: 
             raise ValueError('Cannot use weights {}'.format(weights))
         plots.plot_indices(mis=self.get_indices(), dims=dims, weights=weight_dict, groups=percentiles) 
-          
           
     @log_calls
     def _expand(self, mi_update=NotPassed,mis_update=NotPassed):
@@ -668,7 +673,6 @@ class _Estimator:
         self.fallback_exponents = DefaultDict(init_exponents)  # USED AS PRIOR IN EXPONENT ESTIMATION AND AS INITIAL GUESS OF EXPONENT WHEN NO DATA AVAILABLE AT ALL
         self.exponents = DefaultDict(lambda dim: self.fallback_exponents[dim])
         self.reliability = DefaultDict(lambda dim: 1)
-        #self.md_correction = md_correction or (lambda dim: False)
         self.exponent_max = exponent_max
         self.exponent_min = exponent_min
         self.FIT_WINDOW = np.Inf
@@ -690,10 +694,6 @@ class _Estimator:
             mi_compare = mi - kronecker(dim)
             if self.quantities[mi_compare] > 0:
                 ratio_new = q / self.quantities[mi_compare]
-                #if self.md_correction(dim) and mi_compare[dim] == 0:
-                #    ratio_new -= 1
-                #    if ratio_new < 0:
-                #        ratio_new = 0
             else:
                 ratio_new = np.Inf 
             if len(self.ratios[dim]) < self.FIT_WINDOW:
@@ -814,8 +814,6 @@ class _Data:
                 dim_trigger = mi.active_dims()[0]
                 dims_new = self.decomposition.next_dims(dim_trigger)
                 for dim in dims_new:
-                    #if dim in self.mis.active_dims:#
-                    #    break##mi had been added before! (->parts of mis_update were already in self.mis) 
                     self.mis.add_dimensions([dim])
                     self.runtime_estimator.set_fallback_exponent(dim, self.runtime_estimator.exponents[dim_trigger])
                     if self.decomposition.returns_work:

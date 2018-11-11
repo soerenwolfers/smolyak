@@ -419,10 +419,6 @@ def get_admissible_indices(admissible, dim=-1):
             else:
                 break
     return mis
-
-if __name__=='__main__':
-    a = get_admissible_indices(lambda mi: sum(mi.full_tuple())<3 and max(mi.active_dims() if mi!=MultiIndex() else [0])<4, 2)
-    print(a)
     
 def rectangle(L=None, n=None):
     if not hasattr(L, '__contains__'):
@@ -527,7 +523,7 @@ class MixedDifferences:
         :param store_output: Specifies whether calls to f should be cached
         :type store_output: Boolean.
         '''
-        self.f = f;
+        self.f = f
         self.c_var=c_var
         self.zipped=zipped
         self.reparametrization=reparametrization

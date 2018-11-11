@@ -2,8 +2,7 @@
 smolyak includes the following modules and packages:
 
 * smolyak.py: General, adaptive and non-adaptive, implementations of Smolyak's algorithm
-        in class Approximator. Description of decomposition problems that can be
-        tackled with Approximator in class Decomposition.
+        in class SparseApproximator. 
          
 * indices.py: Various tools for handling multi-indices, such as:
         * a sparse object oriented representation of multi-indices in class MultiIndex
@@ -20,5 +19,5 @@ smolyak includes the following modules and packages:
     * Polynomial approximation
     
 '''
-from .smolyak import SparseApproximation, Decomposition
+from .smolyak import SparseApproximator
 from . import indices

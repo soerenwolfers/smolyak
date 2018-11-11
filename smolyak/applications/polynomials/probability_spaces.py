@@ -29,8 +29,8 @@ class ProbabilitySpace(ABC):
         '''
         pass
 
-class UnivariateProbabilitySpace(ProbabilitySpace):
-    def __init__(self, measure='u', interval=(0, 1)):
+class ProbabilityDistribution(ProbabilitySpace):
+    def __init__(self, measure='u', interval=(-1, 1)):
         if measure  not in ['u', 'c', 'h']:
             raise ValueError('Measure not supported')
         else:
@@ -58,33 +58,33 @@ class UnivariateProbabilitySpace(ProbabilitySpace):
         return X.reshape((-1, 1))
     
     def __mul__(self,other):
-        if isinstance(other,TensorProbabilitySpace):
-            return TensorProbabilitySpace([self]+other.ups)
-        elif isinstance(other,UnivariateProbabilitySpace):
-            return TensorProbabilitySpace([self,other])
+        if isinstance(other,ProductProbabilityDistribution):
+            return ProductProbabilityDistribution([self]+other.ups)
+        elif isinstance(other,ProbabilityDistribution):
+            return ProductProbabilityDistribution([self,other])
         else:
             raise TypeError()
         
     @validate_args(warnings=False)
     def __pow__(self,other:Positive&Integer):
-        return TensorProbabilitySpace([self]*other)
+        return ProductProbabilityDistribution([self]*other)
         
 
-class TensorProbabilitySpace(ProbabilitySpace):
+class ProductProbabilityDistribution(ProbabilitySpace):
     def __init__(self,univariate_probability_spaces):
         self.ups=univariate_probability_spaces
     
     def __mul__(self,other):
-        if isinstance(other,TensorProbabilitySpace):
-            return TensorProbabilitySpace(self.ups+other.ups)
-        elif isinstance(other,UnivariateProbabilitySpace):
-            return TensorProbabilitySpace(self.ups+[other])
+        if isinstance(other,ProductProbabilityDistribution):
+            return ProductProbabilityDistribution(self.ups+other.ups)
+        elif isinstance(other,ProbabilityDistribution):
+            return ProductProbabilityDistribution(self.ups+[other])
         else:
             raise TypeError()
     
     @validate_args(warnings=False)
     def __pow__(self,other:Positive&Integer):
-        return TensorProbabilitySpace(self.ups*other)
+        return ProductProbabilityDistribution(self.ups*other)
 
     def lebesgue_density(self,X):
         D=np.ones((X.shape[0],1))
