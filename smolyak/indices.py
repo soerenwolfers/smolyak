@@ -87,7 +87,10 @@ class MultiIndex:
             if other[dim] != self[dim] and not mod(dim):
                 return False
         return True
-    
+
+    def sum(self):
+        return sum(self.multiindex.values())
+
     def restrict(self, dimensions):  # opposite of .mod
         '''
         Return copy that has non-zero entries only in specified dimensions
@@ -207,10 +210,21 @@ class MultiIndex:
         return self.__str__()  
         
     def __getitem__(self, dim):
-        if dim in self.multiindex.keys():
+        try:    
             return self.multiindex[dim]
-        else:
-            return 0
+        except:
+            if isinstance(dim,int):
+                return 0
+            else:
+                try: 
+                    new = MultiIndex()
+                    for i in dim:
+                        new[i] = self[i]
+                except:
+                    new = MultiIndex()
+                    for i in range(*dim.indices(self.max_dim())):
+                        new[i] = self[i]
+                return new
         
     def __setitem__(self, dim, value):
         if value > 0:
@@ -283,6 +297,7 @@ class DCSet:
     def is_admissible(self, mi):
         '''
         Check if given multi-index is admissible.
+         Returns true also if multi-index is already in set!
         '''
         for dim in mi.active_dims():
             test = mi - kronecker(dim)

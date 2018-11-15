@@ -95,6 +95,7 @@ class Decomposition:
                  bundled_dims:Function(value_spec=Bool) | List(value_spec=Integer)=NotPassed,
                  kronecker_exponents:Function(value_spec=Nonnegative & Float)=NotPassed,
                  stores_approximation:Bool=False,
+                 structure = False,
                  reset:Function=NotPassed):
         r'''        
         :param Delta: Computes decomposition terms.
@@ -166,6 +167,8 @@ class Decomposition:
             decomposition terms itself. If False, :code:`Delta` is also called multiple times with a SparseIndex (or a list of SparseIndices)
             and must return the associated decomposition terms, which are then stored within the SparseApproximator instance
         :type stores_approximation: Boolean
+        :param structure: 
+        :type structure:
         :param reset: If stores_approximation, this function will reset the externally stored approximation
         :type reset: Function
         '''
@@ -180,9 +183,26 @@ class Decomposition:
             self.stores_approximation = True
             self.kronecker_exponents = kronecker_exponents 
             self.reset = Delta.reset
+             
             self._set_is_bundled(True,Delta.bundled_dims)
             self._set_work(work_multipliers,work_function)
             self._set_contribution(contribution_multipliers,contribution_function)
+            if structure.lower() == 'td':
+                structure = lambda mi: [mi.restrict(lambda n:n<Delta.n_acc) + mi2.shifted(Delta.n_acc) 
+                    for mi2 in indices.simplex(n = Delta.n,L=mi.mod(lambda n:n<Delta.n_acc).sum())]
+            elif structure.lower() == 'pd':
+                structure = lambda mi: [mi.restrict(lambda n:n<Delta.n_acc) + mi2.shifted(Delta.n_acc) 
+                    for mi2 in indices.rectangle(n = Delta.n,L=max(mi.mod(lambda n:n<Delta.n_acc)))]
+            elif structure.lower() == 'sym':
+                from sympy.utilities.iterables import multiset_permutations
+                def structure(mi):
+                    mim = mi.mod(lambda n:n<Delta.n_acc)
+                    if mim==MultiIndex():
+                        return []
+                    else:
+                        ret =  [mi.restrict(lambda n:n<Delta.n_acc) + mi2.shifted(Delta.n_acc)
+                            for mi2 in [MultiIndex(perm) for perm in multiset_permutations(mi.mod(lambda n:n<Delta.n_acc).full_tuple())]]
+                        return ret
         else:
             self.Delta = Delta
             self.n = n
@@ -194,6 +214,7 @@ class Decomposition:
             self._set_is_bundled(bundled, bundled_dims)
             self._set_work(work_multipliers, work_function)
             self._set_contribution(contribution_multipliers, contribution_function)
+        self.structure = structure or (lambda mi: set())
         if math.isinf(self.n):
             if not init_dims:
                 init_dims = [0]
@@ -280,6 +301,7 @@ class SparseApproximator:
                  bundled_dims:Function(value_spec=Bool) | List(value_spec=Integer)=NotPassed,
                  kronecker_exponents:Function(value_spec=Nonnegative & Float)=NotPassed,
                  stores_approximation:Bool=False,
+                 structure=False,
                  reset:Function=NotPassed):
         r'''        
         :param Delta: Computes decomposition terms.
@@ -357,7 +379,7 @@ class SparseApproximator:
         self.decomposition = Decomposition(Delta,n,work_multipliers,work_function,
             contribution_multipliers,contribution_function,returns_work,
             returns_contributions, init_dims,next_dims,bundled,bundled_dims,kronecker_exponents,
-            stores_approximation,reset)
+            stores_approximation,structure,reset)
         self.log = Log(print_filter=False)
         self.reset()#To initialize everyting
         
@@ -467,19 +489,21 @@ class SparseApproximator:
         if self.decomposition.bundled and not self.decomposition.returns_contributions:  # WHY?
             raise ValueError('Cannot run adaptively when decomposition.bundled but not decomposition.returns_contributions')
         tic_init = timeit.default_timer()
+        structure_constraints = set([MultiIndex()])
+        if not math.isinf(self.decomposition.n):
+            structure_constraints |= set(MultiIndex(((i,1),),sparse=True) for i in range(self.decomposition.n))
         for _ in (range(N) if Passed(N) else itertools.count()):
             tic = timeit.default_timer()
-            mi_update = None
-            current_mis = self.data.mis.mis
-            if MultiIndex() not in current_mis:
-                mi_update = MultiIndex()
-            elif not math.isinf(self.decomposition.n):
-                for i in range(self.decomposition.n):
-                    unitv = MultiIndex(((i,1),),sparse=True)
-                    if not unitv in current_mis:
-                        mi_update = unitv
-            if mi_update is None:
+            for mi in structure_constraints.copy():
+                if mi in self.data.mis or not self.data.mis.is_admissible(mi):
+                   structure_constraints.discard(mi)
+                else:
+                    mi_update = mi
+                    break
+            else:
                 mi_update = max(self.data.mis.candidates, key=lambda mi: self.data.profit_estimate(mi))
+                if self.decomposition.structure:
+                    structure_constraints |= set(self.decomposition.structure(mi_update))
             self._expand(mi_update)
             if self.data.runtimes[mi_update] < (timeit.default_timer() - tic) / 2.:
                 warnings.warn('Large overhead. Reparametrize decomposition?')

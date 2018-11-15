@@ -220,7 +220,7 @@ class PolynomialApproximator:
         self.n_acc = n_acc
         self.warnings=warnings
         if n is None:
-            self.n = probability_distribution.get_c_var()
+            self.n = self.probability_distribution.get_c_var()
         else:
             self.n = n
         self.bundled_dims = lambda dim: dim >= self.n_acc
