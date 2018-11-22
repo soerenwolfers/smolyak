@@ -11,8 +11,7 @@ from matplotlib import cm
 from mpl_toolkits.mplot3d import Axes3D  # @UnusedImport @UnresolvedImport
 
 from swutil.np_tools import grid_evaluation
-from swutil.collections import RFunction
-from swutil.v_function import VFunction
+from swutil.collections import RFunction, VFunction
 from swutil.collections import DefaultDict
 from swutil.np_tools import grid_evaluation
 
