@@ -468,14 +468,14 @@ def hyperbolic_cross(L, exponents=None, n=None):
             exponents = [exponents] * n
     else:
         if n != len(exponents):
-            raise ValueError('n does not match length of L')
+            raise ValueError('n does not match length of exponents')
         else:
             n = len(exponents)
     def admissible(mi):
         if exponents:
-            return np.prod([(v + 1) ** exponents[i] for i, v in mi]) <= L
+            return np.prod([(v + 1) ** exponents[i] for i, v in mi]) <= L+1
         else: 
-            return np.prod([v + 1 for __, v in mi]) <= L
+            return np.prod([v + 1 for __, v in mi]) <= L+1
     return get_admissible_indices(admissible, n)
     
 def simplex(L, weights=None, n=None):

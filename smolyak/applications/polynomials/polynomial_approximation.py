@@ -14,14 +14,16 @@ from swutil.np_tools import grid_evaluation
 from swutil.collections import RFunction, VFunction
 from swutil.collections import DefaultDict
 from swutil.np_tools import grid_evaluation
+import swutil.validation
 
 from smolyak.applications.polynomials import samples
 from smolyak.indices import MixedDifferences
 from smolyak import indices
 from smolyak.indices import MultiIndex, cartesian_product
-from smolyak.applications.polynomials.probability_spaces import ProbabilityDistribution,\
-    ProductProbabilityDistribution, ProbabilitySpace
+from smolyak.applications.polynomials.probability_distributions import ProbabilityDistribution,\
+    ProductProbabilityDistribution, AbstractProbabilityDistribution 
 from smolyak.applications.polynomials.orthogonal_polynomials import evaluate_orthonormal_polynomials
+
 class PolynomialSpace:
     '''
     Vector space of polynomials for least-squares polynomial approximation on open 
@@ -30,11 +32,10 @@ class PolynomialSpace:
     Combines domain (in form of probability space) with description
     of finite-dimensional subspace of polynomials
     '''
-    
-    def __init__(self, probability_space,warnings = False):
-        if isinstance(probability_space,ProbabilityDistribution):
-            probability_space = ProductProbabilityDistribution(probability_space)
-        self.probability_space=probability_space
+    def __init__(self, probability_distribution,warnings = False):
+        if isinstance(probability_distribution,ProbabilityDistribution):
+            probability_distribution = ProductProbabilityDistribution([probability_distribution])
+        self.probability_distribution=probability_distribution
         self.basis = []
         self.warnings = warnings
     
@@ -72,13 +73,16 @@ class PolynomialSpace:
         W = W.reshape((W.size, 1))
         R = B.transpose().dot(Y * W)
         G = B.transpose().dot(B * W)
-        if self.warnings and np.linalg.cond(G) > 3:
-            warnings.warn('Ill conditioned Gramian matrix encountered') 
+        cond = None
+        if self.warnings:
+            cond = np.linalg.cond(G)
+            if cond > 3:
+                warnings.warn('Ill conditioned Gramian matrix encountered') 
         if G.shape[0]>0:
             coefficients = solve(G, R, sym_pos=True)
         if self.warnings and not np.isfinite(coefficients).all():
             warnings.warn('Numerical instability encountered')
-        return {pol: coefficients[i] for i, pol in enumerate(self.basis)}
+        return {pol: coefficients[i] for i, pol in enumerate(self.basis)},cond
          
     def get_active_dims(self):
         if self.basis:
@@ -90,7 +94,7 @@ class PolynomialSpace:
         '''
         Return dimension of domain (not polynomial subspace, use get_dimension() for that)
         '''
-        return self.probability_space.get_c_var()
+        return self.probability_distribution.get_c_var()
 
     def evaluate_basis(self, X,derivative=None):
         '''
@@ -116,8 +120,8 @@ class PolynomialSpace:
                 basis_values[dim] = evaluate_orthonormal_polynomials(
                     X[:,dim],
                     max(pol[dim] for pol in self.basis), 
-                    measure=self.probability_space.ups[dim].measure, 
-                    interval=self.probability_space.ups[dim].interval,
+                    measure=self.probability_distribution.ups[dim].measure, 
+                    interval=self.probability_distribution.ups[dim].interval,
                     derivative = derivative[dim]
                 )
             values = np.empty_like(values)
@@ -159,21 +163,21 @@ class PolynomialSpace:
         max_var = max([pol.max_dim()for pol in self.basis])
         if max_var > self.get_c_var():
             for __ in range(max_var - self.get_c_var()):
-                self.probability_space.ups.append(copy.deepcopy(self.probability_space.ups[-1]))
+                self.probability_distribution.ups.append(copy.deepcopy(self.probability_distribution.ups[-1]))
         
     def plot_optimal_distribution(self, N=200, L=1):
         '''
         Plot optimal sampling distribution
         '''
         if self.get_c_var() == 1:
-            X = self.probability_space.get_range(N, L)
-            Z = self.probability_space.lebesgue_density(X) / self.optimal_weights(X)
+            X = self.probability_distribution.get_range(N, L)
+            Z = self.probability_distribution.lebesgue_density(X) / self.optimal_weights(X)
             fig = plt.figure()
             ax = fig.gca()
             ax.plot(X, Z)
         elif self.get_c_var() == 2:
-            X, Y = self.probability_space.get_range(N, L)
-            Z = grid_evaluation(X, Y,self.probability_space.lebesgue_density) / grid_evaluation(X, Y,self.optimal_weights)
+            X, Y = self.probability_distribution.get_range(N, L)
+            Z = grid_evaluation(X, Y,self.probability_distribution.lebesgue_density) / grid_evaluation(X, Y,self.optimal_weights)
             fig = plt.figure()
             ax = fig.gca(projection='3d')
             ax.plot_surface(X, Y, Z, cmap=cm.coolwarm, alpha=0.5)  # @UndefinedVariable
@@ -207,12 +211,15 @@ class PolynomialApproximator:
         #if C<1:
         #    raise ValueError('Choose C>=1')
         self.C=C
-        if isinstance(domain,ProbabilitySpace):
+        if isinstance(domain,AbstractProbabilityDistribution):
             self.probability_distribution = domain
         elif domain:
-            self.probability_distribution = ProbabilityDistribution(interval = domain[0])
-            for dom in domain[1:]:
-                self.probability_distribution = self.probability_distribution * ProbabilityDistribution(interval = dom)
+            if swutil.validation.Iterable.valid(domain[0]):
+                self.probability_distribution = ProbabilityDistribution(interval = domain[0])
+                for dom in domain[1:]:
+                    self.probability_distribution = self.probability_distribution * ProbabilityDistribution(interval = dom)
+            else:
+                self.probability_distribution = ProbabilityDistribution(interval = domain)
         else:
             self.probability_distribution = ProbabilityDistribution()**n
         self.sampler=sampler
@@ -226,17 +233,20 @@ class PolynomialApproximator:
         self.function = function
         if self.n_acc>0:
             def T(mi_acc): 
-                #mi_acc = mi.mod(self.bundled_dims)
-                return VFunction(lambda X: self.function(mi_acc,X))
+                if np.isinf(self.n_acc): # prevent user from accidentally modifying mi_acc
+                    mi = copy.deepcopy(mi_acc)
+                else:
+                    mi = mi_acc.full_tuple(c_dim=self.n_acc)
+                return VFunction(lambda X: self.function(mi,X))
             mdT=MixedDifferences(T)
-        get_wpa = lambda mi_acc: SinglelevelPolynomialApproximator(
+        get_spa = lambda mi_acc: SinglelevelPolynomialApproximator(
             function = mdT(mi_acc) if self.n_acc else self.function,
             probability_distribution = copy.deepcopy(self.probability_distribution),
             C = self.C,
             sampler = self.sampler,
             warnings = self.warnings
         )    
-        self.WPAs = DefaultDict(default=get_wpa)
+        self.spas = DefaultDict(default=get_spa)
         self.reparametrization=reparametrization
      
     def plot_samples(self,mi_acc=None):
@@ -244,12 +254,23 @@ class PolynomialApproximator:
             raise ValueError('Must specify which delta to plot')
         if not isinstance(mi_acc,MultiIndex):
             mi_acc = MultiIndex(mi_acc)
-        if mi_acc not in self.WPAs:
-            raise ValueError('Only have samples with accuracy parameters {}'.format(list(self.WPAs.keys())))
-        self.WPAs[mi_acc].plot_samples()
+        if mi_acc not in self.spas:
+            raise ValueError('Only have samples with accuracy parameters {}'.format(list(self.spas.keys())))
+        self.spas[mi_acc].plot_samples()
+
+    def get_samples(self,mi_acc=None):
+        if mi_acc is not None and not isinstance(mi_acc,MultiIndex):
+            mi_acc = MultiIndex(mi_acc)
+            if mi_acc not in self.spas:
+                raise ValueError('Only have samples with accuracy parameters {}'.format(list(self.spas.keys())))
+        if mi_acc is None:
+            if self.n_acc>0:
+                return {mi_acc:(spa.X,spa.Y) for spa in self.spas}
+            else:
+                return self.spas[MultiIndex()].X,self.spas[MultiIndex()].Y
                  
     #def get_active_dims(self):
-    #    return set.union(*[WPA.get_active_dims() for WPA in self.WPAs.values()]) 
+    #    return set.union(*[spa.get_active_dims() for spa in self.spas.values()]) 
     
     def get_approximation(self,mi_acc=None):
         '''
@@ -261,11 +282,11 @@ class PolynomialApproximator:
         if mi_acc is not None:
             if not isinstance(mi_acc,MultiIndex):
                 mi_acc = MultiIndex(mi_acc)
-            if mi_acc not in self.WPAs:
-                raise ValueError('Only have approximation of Deltas with accuracy parameters {}'.format(list(self.WPAs.keys())))
-            return self.WPAs[mi_acc].get_approximation()
+            if mi_acc not in self.spas:
+                raise ValueError('Only have approximation of Deltas with accuracy parameters {}'.format(list(self.spas.keys())))
+            return self.spas[mi_acc].get_approximation()
         else:
-            return sum([self.WPAs[mi_acc].get_approximation() for mi_acc in self.WPAs])
+            return sum([self.spas[mi_acc].get_approximation() for mi_acc in self.spas])
            
     def update_approximation(self, mis):
         r'''
@@ -285,10 +306,10 @@ class PolynomialApproximator:
         contributions=dict()
         for bundle in bundles:
             mis_pols,mi_acc= self._handle_mis(bundle)
-            (new_work,_) = self.WPAs[mi_acc].update_approximation(self._pols_from_mis(mis_pols))
+            (new_work,_) = self.spas[mi_acc].update_approximation(self._pols_from_mis(mis_pols))
             work+=new_work
             #if work>0:
-            pa = self.WPAs[mi_acc].get_approximation()
+            pa = self.spas[mi_acc].get_approximation()
             contributions.update({mi_acc+mi.shifted(self.n_acc): pa.norm(self._pols_from_mi(mi)) for mi in mis_pols})
         return work, contributions
     
@@ -311,7 +332,7 @@ class PolynomialApproximator:
         work = 0
         for bundle in bundles:
             mis_pols, mi_acc = self._handle_mis(bundle)
-            work += self.WPAs[mi_acc].estimated_work(self._pols_from_mis(mis_pols))
+            work += self.spas[mi_acc].estimated_work(self._pols_from_mis(mis_pols))
         return work
 
     def _handle_mis(self, mis):
@@ -355,6 +376,9 @@ class PolynomialApproximator:
             return pols
         else:
             return mis
+
+    def _get_info(self):
+        return [spa._info for spa in self.spas.values()]
         
 class SinglelevelPolynomialApproximator:
     '''
@@ -438,12 +462,6 @@ class SinglelevelPolynomialApproximator:
             self.Y = np.concatenate([self.Y, Ynew])
             work_model = timeit.default_timer() - tic
         else: 
-            #(self.X, self.W) = samples.optimal_samples(self.polynomial_space, c_samples)
-            #tic = timeit.default_timer()
-            #self.Y = self.function(self.X).reshape(-1, 1)
-            #if not self.Y.shape[0]==self.X.shape[0]:
-            #    raise ValueError('Function must return as many outputs values as it is given inputs')
-            #work_model = timeit.default_timer() - tic
             tic=timeit.default_timer()
             (Xnew,Wnew) = samples.samples_per_polynomial(self.polynomial_space,old_basis, pols,self.C)
             self.X = np.concatenate((self.X,Xnew),axis=0)
@@ -465,7 +483,8 @@ class SinglelevelPolynomialApproximator:
             old_err_settings = np.seterr(all='raise')
             while self._recompute_approximation:
                 try:
-                    self._approximation =  PolynomialApproximation(self.polynomial_space,self.polynomial_space.weighted_least_squares(self.X, self.W, self.Y))
+                    (coeffs,self._info) = self.polynomial_space.weighted_least_squares(self.X, self.W, self.Y)
+                    self._approximation =  PolynomialApproximation(self.polynomial_space,coeffs)
                     self._recompute_approximation = False
                 except LinAlgError:
                     warnings.warn('Singular matrix, doubling number of samples')
@@ -593,12 +612,12 @@ class PolynomialApproximation:
         '''
         fig = plt.figure()
         if self.polynomial_space.get_c_var() == 1:
-            X = self.polynomial_space.probability_space.get_range()
+            X = self.polynomial_space.probability_distribution.get_range()
             Z = self(X)
             ax = fig.gca()
             ax.plot(X, Z)
         elif self.polynomial_space.get_c_var() == 2:
-            X, Y = self.polynomial_space.probability_space.get_range()
+            X, Y = self.polynomial_space.probability_distribution.get_range()
             Z = grid_evaluation(X, Y, self)
             ax = fig.gca(projection='3d')
             ax.plot_surface(X, Y, Z)

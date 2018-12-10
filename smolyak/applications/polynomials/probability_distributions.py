@@ -3,7 +3,7 @@ import numpy as np
 from numpy import meshgrid
 from swutil.validation import Integer, Positive, validate_args
 
-class ProbabilitySpace(ABC):
+class AbstractProbabilityDistribution(ABC):
     '''
     Probability spaces over subsets of Euclidean space
     '''
@@ -29,7 +29,7 @@ class ProbabilitySpace(ABC):
         '''
         pass
 
-class ProbabilityDistribution(ProbabilitySpace):
+class ProbabilityDistribution(AbstractProbabilityDistribution):
     def __init__(self, measure='u', interval=(-1, 1)):
         if measure  not in ['u', 'c', 'h']:
             raise ValueError('Measure not supported')
@@ -70,9 +70,9 @@ class ProbabilityDistribution(ProbabilitySpace):
         return ProductProbabilityDistribution([self]*other)
         
 
-class ProductProbabilityDistribution(ProbabilitySpace):
-    def __init__(self,univariate_probability_spaces):
-        self.ups=univariate_probability_spaces
+class ProductProbabilityDistribution(AbstractProbabilityDistribution):
+    def __init__(self,univariate_probability_distributions):
+        self.ups=univariate_probability_distributions
     
     def __mul__(self,other):
         if isinstance(other,ProductProbabilityDistribution):

@@ -31,7 +31,7 @@ def optimal_samples(tensor_polynomial_subspace, N):
         j = random.randrange(0, tensor_polynomial_subspace.get_dimension())
         for dim in range(tensor_polynomial_subspace.get_c_var()):
             degree = tensor_polynomial_subspace.basis[j][dim]
-            X[i, dim] = sample_from_polynomial(tensor_polynomial_subspace.probability_space.ups[dim],degree)
+            X[i, dim] = sample_from_polynomial(tensor_polynomial_subspace.probability_distribution.ups[dim],degree)
     W = tensor_polynomial_subspace.optimal_weights(X)
     return (X, W)
 
@@ -51,7 +51,7 @@ def samples_per_polynomial(tensor_polynomial_subspace,old_basis,pols,C=2):
         for _ in range(N_new if new else N_add):
             for dim in range(tensor_polynomial_subspace.get_c_var()):
                 degree = pol[dim]
-                X[i, dim] = sample_from_polynomial(tensor_polynomial_subspace.probability_space.ups[dim],degree)
+                X[i, dim] = sample_from_polynomial(tensor_polynomial_subspace.probability_distribution.ups[dim],degree)
             i+=1
     W = tensor_polynomial_subspace.optimal_weights(X)
     return (X, W)
