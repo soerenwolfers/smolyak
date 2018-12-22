@@ -4,17 +4,20 @@ import copy
 import timeit
 
 import numpy as np
+import scipy
 from scipy.linalg import solve
 from scipy.linalg.misc import LinAlgError
 import matplotlib.pyplot as plt
 from matplotlib import cm
-from mpl_toolkits.mplot3d import Axes3D  # @UnusedImport @UnresolvedImport
+#from mpl_toolkits.mplot3d import Axes3D  # @UnusedImport @UnresolvedImport
 
 from swutil.np_tools import grid_evaluation
 from swutil.collections import RFunction, VFunction
 from swutil.collections import DefaultDict
 from swutil.np_tools import grid_evaluation
 import swutil.validation
+from swutil.time import Timer
+from swutil.decorators import print_runtime
 
 from smolyak.applications.polynomials import samples
 from smolyak.indices import MixedDifferences
@@ -58,7 +61,17 @@ class PolynomialSpace:
                 return W   
         else:
             raise ValueError('Polynomial subspace is zero-dimensional')
-    
+
+    def simple_iterative_solver(self,G,R,x0,tol):
+        for i in range(1000):
+            x1 = (x0-G(x0))+R
+            if np.linalg.norm(x1-x0)<tol*np.linalg.norm(x1) or np.linalg.norm(x1-x0)<1e-12:
+                break
+            else:
+                x0 = x1
+        return x1,i
+
+    @print_runtime
     def weighted_least_squares(self, X, W, Y):
         '''
         Compute least-squares approximation. 
@@ -70,16 +83,47 @@ class PolynomialSpace:
         :return: coefficients
         '''
         B = self.evaluate_basis(X)
+        Worig = W.copy()
+        N=X.shape[0]
         W = W.reshape((W.size, 1))
-        R = B.transpose().dot(Y * W)
-        G = B.transpose().dot(B * W)
+        R = B.transpose().dot(Y * W)/X.shape[0]
+        #with Timer('building G'):
+        #    G = B.transpose().dot(B * W)/X.shape[0]
         cond = None
-        if self.warnings:
-            cond = np.linalg.cond(G)
-            if cond > 3:
-                warnings.warn('Ill conditioned Gramian matrix encountered') 
-        if G.shape[0]>0:
-            coefficients = solve(G, R, sym_pos=True)
+        #if self.warnings:
+            #cond = np.linalg.cond(G)
+            #if cond > 3:
+            #    warnings.warn('Ill conditioned Gramian matrix encountered') 
+        G=np.eye(B.shape[1])
+        D = np.zeros(B.shape[1])
+        for i in range(B.shape[1]):
+            D[i] = np.sum((B[:,i])**2*Worig[:,0])/X.shape[0]
+        #D =np.ones(B.shape[1])
+        print(D[0],G[0,0])
+        #if G.shape[0]>0:
+        #with Timer('BLACKBOX'):
+            #coefficients = solve(G, R, sym_pos=True)
+        i=0
+        def Gappl(x):
+            nonlocal i
+            i+=1
+            #print('asdf',Worig.shape,x.shape)
+            return  B.transpose()@(Worig*B@x)/Worig.shape[0]/D
+            #return G@xk
+        tol=1e-6
+        linop = scipy.sparse.linalg.LinearOperator(shape = (G.shape[0],G.shape[1]),matvec=Gappl,rmatvec=Gappl)
+        with Timer('GMRES'):
+            coefficients,*info = scipy.sparse.linalg.gmres(linop,R[:,0]/D,x0=R[:,0],tol=tol)
+            print('GMRES',i)
+        rls = np.sqrt(W)*Y/np.sqrt(N)
+        M = np.sqrt(W)*B/np.sqrt(N)/D
+        with Timer('LS'):
+            coefficients_ls,*info = scipy.sparse.linalg.lsmr(M,rls,x0=R[:,0],atol=tol,btol=tol)
+            print('LS',info)
+        with Timer('Simple'):
+            coefficients_s,*info = self.simple_iterative_solver(Gappl,R[:,0],x0=R[:,0],tol=tol)
+            print('Simple',info)
+        print('SimpleGMRES',np.linalg.norm(coefficients_ls/D-coefficients))
         if self.warnings and not np.isfinite(coefficients).all():
             warnings.warn('Numerical instability encountered')
         return {pol: coefficients[i] for i, pol in enumerate(self.basis)},cond
