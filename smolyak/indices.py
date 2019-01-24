@@ -91,10 +91,11 @@ class MultiIndex:
     def sum(self):
         return sum(self.multiindex.values())
 
-    def restrict(self, dimensions):  # opposite of .mod
+    def restrict(self, dimensions):  
         '''
         Return copy that has non-zero entries only in specified dimensions
-        
+        mi.restrict(dimensions) is the same as mod(lambda d: not dimension(d)). 
+
         :param dimensions: Restrict to these entries
         :type dimensions: boolean function
         '''
@@ -187,7 +188,7 @@ class MultiIndex:
     
     def __sub__(self, other):
         new = self.copy()
-        for dim in other.multiindex:  # list(other.multiindex.keys()):
+        for dim in other.multiindex:
             new[dim] = new[dim] - other[dim]
         return new
     
@@ -195,6 +196,18 @@ class MultiIndex:
         new = self.copy()
         for dim in other.multiindex:
             new[dim] = new[dim] + other[dim]
+        return new  
+
+    # def __mul__(self,other):
+    #     new = self.copy()
+    #     for dim in new.multiindex:
+    #         new[dim] = other*new[dim]
+    #     return new  
+
+    def __rmul__(self,other):
+        new = self.copy()
+        for dim in new.multiindex:
+            new[dim] = other*new[dim]
         return new  
     
     def __radd__(self,other):
@@ -227,7 +240,7 @@ class MultiIndex:
                 return new
         
     def __setitem__(self, dim, value):
-        if value > 0:
+        if value != 0:
             self.multiindex[dim] = value
         else:
             if dim in self.multiindex.keys():
