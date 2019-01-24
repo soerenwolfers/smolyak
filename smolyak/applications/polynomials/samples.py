@@ -35,11 +35,10 @@ def optimal_samples(tensor_polynomial_subspace, N):
     W = tensor_polynomial_subspace.optimal_weights(X)
     return (X, W)
 
-def samples_per_polynomial(tensor_polynomial_subspace,old_basis,pols,C=2):
-    c_samples=lambda l: int(math.ceil(C  * np.log2(l + 1)))
+def samples_per_polynomial(tensor_polynomial_subspace,old_basis,pols,c_samples):
     l_old = len(old_basis)
-    N_new = c_samples(len(pols))
-    N_add = N_new - c_samples(l_old)
+    N_new = math.ceil(c_samples(len(pols)))
+    N_add = math.ceil(N_new) - math.ceil(c_samples(l_old))
     news = np.zeros(len(pols))
     for j,pol in enumerate(pols):
         if not pol in old_basis:
@@ -55,7 +54,6 @@ def samples_per_polynomial(tensor_polynomial_subspace,old_basis,pols,C=2):
             i+=1
     W = tensor_polynomial_subspace.optimal_weights(X)
     return (X, W)
-
             
 def sample_from_polynomial(probability_space, pol):
     def dens_goal(X):
