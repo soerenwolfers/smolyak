@@ -46,7 +46,7 @@ from swutil.validation import NotPassed, Positive, Integer, Float, validate_args
     List, Equals, InInterval, Arg, Passed, In
 from swutil import plots
 
-from smolyak.indices import  MultiIndexDict, get_admissible_indices, DCSet, \
+from smolyak.indices import  MultiIndexDict, get_admissible_indices, MISet, \
     kronecker, MultiIndex, get_bundles, get_bundle
 from smolyak import indices
 from smolyak.applications.polynomials import PolynomialApproximator
@@ -428,7 +428,7 @@ class SparseApproximator:
 
         There are four ways to determine the updated multi-index set:
          :code:`indices`, which requires passing the new multi-indices with the argument `indices`
-         :code:`adaptive`, which expands the multi-index set adaptively, one multi-index at a time
+         :code:`adaptive`, which increases the multi-index set adaptively, one multi-index at a time
          :code:`apriori`, which constructs the set based on a-priori knowledge about work and contribution of the decomposition terms
          :code:`continuation`, which constructs the set by a combination of first learning the behavior of work and contribution, and then using this knowledge to create optimal sets.
         
@@ -526,6 +526,8 @@ class SparseApproximator:
                 else 1 
                 for i in range(n)
             ]
+        else: 
+            raise ValueError('No mode selected')
         max_time=0
         for l in it:
             tic_iter = timer()
@@ -542,13 +544,11 @@ class SparseApproximator:
                 mis_update = indices.simplex(L=l, weights=(work_exponents() + contribution_exponents()) / scale, n=n)
             elif mode == 'indices':
                 mis_update = indices
-            self._expand_by_indices(mis_update) # check whether this rbreaks when mis_udpate is a subset of current mis
+            self._extend(mis_update) # check whether this rbreaks when mis_udpate is a subset of current mis
             max_time = max(timer() - tic_iter,max_time)
-            if sum(self.data.runtimes[bundle[0]] for bundle in get_bundles(mis_update,self.decomposition.bundled_dims)) < (timer() - tic_iter) / 2:
-                warnings.warn('Large overhead. Reparametrize decomposition?')
         
     @log_calls    
-    def _expand_by_indices(self, mis):
+    def _extend(self, mis):
         '''
         :param mis: Multi-indices to add to approximation
         :type mis: Iterable of multi-indices
@@ -576,7 +576,7 @@ class SparseApproximator:
                 external_work_factor = self.decomposition.work_function(mis_update) # Want to be able to provide work function with whole bundle without checking what is actually new and then asking each of those separately, thats why it is required that work_function covers all bundled dimensions
             else:
                 external_work_factor = self.decomposition.work_function(mi_update)
-            self.data.expand(mis_update)
+            self.data.extend(mis_update)
             if self.decomposition.stores_approximation:
                 argument = self.data.mis.mis # provide full set, leave it to external to reuse computations or not 
             else:
@@ -649,8 +649,8 @@ class SparseApproximator:
         return copy.deepcopy(self.data.mis.mis)
 
     def _get_work_exponent(self, dim):
-        estimator = self.data.work_estimator if self.decomposition.returns_work else self.data.runtime_estimator
-        if not esitmator.dims_ignore(dim):
+        estimator = self.data.work_model_estimator if self.decomposition.returns_work else self.data.runtime_estimator
+        if not estimator.dims_ignore(dim):
                 return estimator.exponents[dim]
         else:
             raise KeyError('No work fit for this dimension')
@@ -700,16 +700,16 @@ class SparseApproximator:
         plots.plot_indices(mis=self.get_indices(), dims=dims, weights=weight_dict, groups=percentiles) 
 
 class _Estimator:
-    def __init__(self, dims_ignore, exponent_max, exponent_min, md_correction=None, init_exponents=None,name=''):
+    def __init__(self, dims_ignore, exponent_max, exponent_min, init_exponents=None,name=''):
         self.quantities = {}
         self.dims_ignore = dims_ignore
-        self.ratios = DefaultDict(lambda dim: [])
+        self.FIT_WINDOW = int(1e6)
+        self.ratios = DefaultDict(lambda dim: collections.deque([],self.FIT_WINDOW))
         init_exponents = init_exponents or (lambda dim:0)
         self.fallback_exponents = DefaultDict(init_exponents)  # USED AS PRIOR IN EXPONENT ESTIMATION AND AS INITIAL GUESS OF EXPONENT WHEN NO DATA AVAILABLE AT ALL
         self.exponents = DefaultDict(lambda dim: self.fallback_exponents[dim])
         self.exponent_max = exponent_max
         self.exponent_min = exponent_min
-        self.FIT_WINDOW = np.Inf
         self.active_dims = set()   
         self.name=name
         
@@ -724,21 +724,15 @@ class _Estimator:
         self.active_dims.update(set(mi.active_dims()))
         mi = mi.mod(self.dims_ignore)
         q = float(q)
+        have = mi in self.quantities
         self.quantities[mi] = q  #two reasons to overwrite: 1) in least squares polynomials for the contribution estimate, the estimate of every single coefficient gets better and better over time 2) in general, for dimensions that are modulod out because their work contribution factor is known, this entry is theoretically the same but practically different. for example, look at MLMC, assume the work factor of the first parameter is theoretically 2. then this stores effectively the cost per sample divided by 2**l. however, this cost is not actually indpendent of the level  
-        for dim in [dim for dim in mi.active_dims()]:
-            mi_compare = mi - kronecker(dim)
-            if self.quantities[mi_compare] > 0:
-                ratio_new = q / self.quantities[mi_compare]
-            else:
-                if q>0:
-                    ratio_new = np.Inf 
-                else:
-                    ratio_new = 1
-            if len(self.ratios[dim]) < self.FIT_WINDOW:
-                self.ratios[dim].append(ratio_new)
-            else:
-                self.ratios[dim] = self.ratios[dim][1:] + [ratio_new]
-        self._update_exponents()
+        if not have:
+            get_ratio = lambda a,b: a/b if b>0 else (np.Inf if a>0 else 1)
+            for dim in self.active_dims:
+                neighbor = mi + (-1)*kronecker(dim)
+                if neighbor in self.quantities:
+                    self.ratios[dim].append(get_ratio(q,self.quantities[neighbor])) 
+            self._update_exponents()
         
     def _update_exponents(self):
         for dim in self.ratios:
@@ -747,14 +741,6 @@ class _Estimator:
             c = len(ratios)
             self.exponents[dim] = (self.fallback_exponents[dim] + c * np.log(estimate)) / (c + 1.)
     
-    def _base_estimate(self, mi):
-        q_neighbors = [self.quantities[mi]]
-        for dim,sign in itertools.product(self.active_dims,(-1,1)):
-            neighbor = mi + sign*kronecker(dim)
-            if neighbor in self.quantities:
-                q_neighbors.append(self.quantities[neighbor])
-        return np.max(q_neighbors)
-      
     def __call__(self, mi):
         mi = mi.mod(self.dims_ignore)
         if mi in self.quantities:
@@ -762,20 +748,14 @@ class _Estimator:
         else:
             if mi.is_kronecker():
                 dim = mi.active_dims()[0]
-                return self._base_estimate(MultiIndex())*np.exp(self.exponents[dim])
-            if mi.active_dims():
-                q_neighbors = []
-                w_neighbors = []
-                for dim in mi.active_dims():
-                    neighbor = mi - kronecker(dim)
-                    try:
-                        q_neighbor = self._base_estimate(neighbor)# Could replace self._base_estimate[neighbor] by self.quantities[neighbor], but would be more prone to getting fooled by initial unimportant indices in some dimensions
-                    except:
-                        raise KeyError('Could not access required contribution or work estimate. Were they specified?')
-                    q_neighbors.append(q_neighbor)
-                return max(q_neighbors)
+                return self.quantities[MultiIndex()]*np.exp(self.exponents[dim])
             else:
-                return 1
+                estimate = 0
+                for dim,sign in itertools.product(self.active_dims,(-1,1)):
+                    neighbor = mi + sign*kronecker(dim)
+                    if neighbor in self.quantities:
+                        estimate = max(estimate,self.quantities[neighbor])
+                return estimate
 
 class _Data:
     def __init__(self, decomposition):
@@ -803,7 +783,7 @@ class _Data:
                                       exponent_min=self.WORK_EXPONENT_MIN,
                                       name='work_model')
             self.work_models = MultiIndexDict(decomposition.bundled_dims)
-        self.mis = DCSet(dims=decomposition.init_dims)
+        self.mis = MISet(dims=decomposition.init_dims)
         self.mis.structure_constraints = set([MultiIndex()])
         self.mis.structure_constraints |= set(MultiIndex(((i,1),),sparse=True) for i in self.decomposition.init_dims)
         self.object_slices = MultiIndexDict(decomposition.bundled_dims)
@@ -818,24 +798,28 @@ class _Data:
                 mi_update = mi
                 break
         else:
-            estimates = {mi:self.profit_estimate(mi) for mi in mis.candidates}
+            estimates = {mi:self.profit_estimate(mi) for mi in mis.candidates} 
+            # plots.plot_indices(mis.candidates)
+            # plots.plot_indices(mis.mis,colors=[[0,0,0]])
+            # import matplotlib.pyplot as plt
+            # plt.show()
             mi_update = max(mis.candidates, key=lambda mi: self.profit_estimate(mi))
             if self.decomposition.structure:
                 mis.structure_constraints |= set(self.decomposition.structure(mi_update))
         return mi_update
 
-    def apriori_indices(L):
+    def apriori_indices(self,L):
         def admissible(mi):
             return self.profit_estimate(mi) ** (-1) <= np.exp(L + 1e-12)
         try:
-            mis = get_admissible_indices(lambda mi: admissible(mi,l), self.decomposition.n)
+            mis = get_admissible_indices(lambda mi: admissible(mi), self.decomposition.n)
         except KeyError:
             raise KeyError('Did you specify the work for all dimensions?')
     
-    def expand(self,mis_update):
+    def extend(self,mis_update):
         if math.isinf(self.decomposition.n):
             self._find_new_dims(mis_update)
-        self.mis.add_many(mis_update)        
+        self.mis.update(mis_update)        
         
     def update_estimates(self, mis_update, mi_update, object_slice, contribution, work_model, runtime, external_work_factor):
         self.object_slices[mi_update] = object_slice
@@ -847,8 +831,8 @@ class _Data:
         else: # external_work_factor refers to runtime
             self.runtime_estimator[mi_update] = runtime / external_work_factor
         try:
-            for mi in mis_update:
-                self.contribution_estimator[mi] = contribution[mi] / self.decomposition.contribution_function(mi) # Here lies reason why the reasoning does not apply to contributions: they can always be split up among all the multi-indices in a bundle (this is implicit in the assumption that the used provided contributions are separate for each mi in mi_update) 
+            for mi in contribution:
+                self.contribution_estimator[mi] = contribution[mi] / self.decomposition.contribution_function(mi) # Here lies reason why the reasoning above does not apply to contributions: they can always be split up among all the multi-indices in a bundle (this is implicit in the assumption that the used provided contributions are separate for each mi in mi_update) 
                 self.contributions[mi] = contribution[mi]
         except (KeyError, NameError): 
             pass  # Contribution could not be determined, contribution was never created 

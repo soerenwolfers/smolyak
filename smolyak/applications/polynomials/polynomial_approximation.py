@@ -87,6 +87,7 @@ class PolynomialSpace:
             rls = np.sqrt(W)*Y
             M = np.sqrt(W)*B
             coefficients,*info = scipy.sparse.linalg.lsmr(M,rls[:,0],atol=tol,btol=tol)
+            # coefficients,_ = scipy.sparse.linalg.gmres(M.T@M,M.T@rls[:,0],tol=tol)
             if self.warnings and not np.isfinite(coefficients).all():
                 warnings.warn('Numerical instability encountered')
         return {pol: coefficients[i] for i, pol in enumerate(self.basis)},cond
@@ -141,13 +142,13 @@ class PolynomialSpace:
     
     def set_basis(self,polynomials):
         self.basis=[]
-        self.expand_basis(polynomials)
+        self.extend_basis(polynomials)
         
-    def expand_basis(self, polynomials):
+    def extend_basis(self, polynomials):
         '''
-        Expand polynomial subspace.
+        Extend polynomial subspace.
         
-        If necessary, expand dimension of domain, as well. 
+        If necessary, extend dimension of domain as well. 
         
         :param polynomials: Polynomials to be added
         '''
@@ -295,7 +296,7 @@ class PolynomialApproximator:
         
         Converts list of multi-indices into part that describes polynomial basis
         and part that describes accuracy of samples that are being used, then 
-        expands polynomial approximation of self.functon based on this information.
+        extend polynomial approximation of self.functon based on this information.
         
         
         :param mis: Multi-indices 
@@ -321,15 +322,19 @@ class PolynomialApproximator:
         self.__init__(function=self.function, n_acc=self.n_acc, n = self.n , 
             warnings = self.warnings,domain=self.probability_distribution,C=self.C,sampler=self.sampler,reparametrization = self.reparametrization)
     
-    def estimated_work(self, mis):          
+    def estimated_work(self, mis,multibundles=False):          
         '''
         Return number of samples that would be generated if instance were 
-        expanded with given multi-index set.
+        extended with given multi-index set.
         
-        :param mis: (List of) multi-index
+        :param mis: (List of) MultiIndex
+        :param multibundles: Allow for multi-index sets that contain multiple different accuracies
         :return: Number of new sampls
         '''
-        bundles = indices.get_bundles(mis,self.bundled_dims)
+        if multibundles:
+            bundles = indices.get_bundles(mis,self.bundled_dims)
+        else:
+            bundles = [mis]
         work = 0
         for bundle in bundles:
             mis_pols, mi_acc = self._handle_mis(bundle)
@@ -386,7 +391,7 @@ class PolynomialApproximator:
         try:
             active_spas = [spa for spa in self.spas.values() if spa.polynomial_space.basis]
             recent_spa = active_spas[-1]
-            remainder = sum([spa.remainder for spa in active_spas]) + recent_spa.get_approximation().norm() + recent_spa.remainder
+            remainder = sum([spa.remainder for spa in active_spas]) + (recent_spa.get_approximation().norm() + recent_spa.remainder if self.n_acc>0 else 0)
             have = sum([spa.get_approximation().norm() for spa in active_spas])
             return remainder/(have+remainder)
         except IndexError:
@@ -436,8 +441,8 @@ class SinglelevelPolynomialApproximator:
         :param pols 
         :return: Number of required samples
         '''
-        if all(pol in self.polynomial_space.basis for pol in pols):
-            return 0
+        # if all(pol in self.polynomial_space.basis for pol in pols):
+        #     return 0
         c_pols = len(pols)
         c_samples = self.c_samples_from_c_pols(c_pols)
         if self.keep:
@@ -510,7 +515,7 @@ class SinglelevelPolynomialApproximator:
                 if pol not in app.coefficients:
                     app.coefficients[pol] = 0
         if Xnew.shape[0]>0:
-            self.remainder = np.linalg.norm(Wnew*(old_approximation(Xnew).reshape([-1,1])-Ynew)**2/Xnew.shape[0])
+            self.remainder = np.sqrt(np.sum(Wnew/np.sum(Wnew)*(old_approximation(Xnew).reshape([-1,1])-Ynew)**2)) 
         return work_model,self.get_contributions()
         
     def get_contributions(self):

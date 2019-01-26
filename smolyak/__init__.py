@@ -6,7 +6,7 @@ smolyak includes the following modules and packages:
          
 * indices.py: Various tools for handling multi-indices, such as:
         * a sparse object oriented representation of multi-indices in class MultiIndex
-        * the class DCSet for the storage of downward closed multi-index sets
+        * the class MISet for connected multi-index sets
         * a class that computes mixed differences
         * various functions for the generation of multi-index sets in different shapes, such as
             simplex, hyperbolic_cross, pyramids, or determined by user-defined functions (get_admissible_indices)

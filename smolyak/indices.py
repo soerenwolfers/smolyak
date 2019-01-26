@@ -83,7 +83,7 @@ class MultiIndex:
         :param mod: Dimensions to be ignored
         :type mod: boolean function
         '''
-        for dim in itertools.chain(self.multiindex.keys(), other.multiindex.keys()):
+        for dim in set(self.multiindex.keys())|set(other.multiindex.keys()):
             if other[dim] != self[dim] and not mod(dim):
                 return False
         return True
@@ -163,7 +163,7 @@ class MultiIndex:
         else:
             dims = itertools.chain(d1,d2)  
             dim_max=max(dims)
-            return self.full_tuple(dim_max+1)<other.full_tuple(dim_max+1)
+            return np.all(np.less(self.full_tuple(dim_max+1),other.full_tuple(dim_max+1)))
     
     def __le__(self,other):
         d1,d2 = self.active_dims(),other.active_dims()
@@ -172,7 +172,7 @@ class MultiIndex:
         else:
             dims = itertools.chain(d1,d2)  
             dim_max=max(dims)
-            return self.full_tuple(dim_max+1)<=other.full_tuple(dim_max+1)
+            return np.all(np.less_equal(self.full_tuple(dim_max+1),other.full_tuple(dim_max+1)))
             
     def __eq__(self, other):
         return self.multiindex == other.multiindex
@@ -252,13 +252,10 @@ class MultiIndex:
             new[dim] = -new[dim]
         return new
 
-class DCSet:
+class MISet:
     '''
-    Stores downward closed sets of multi-indices and corresponding 
+    Stores connected sets of multi-indices and corresponding 
     admissible multi-indices.
-        
-    A multi-index is called admissible here if the set of multi-indices 
-    remains downward closed after adding it
     '''
     def __init__(self,mis=(),dims = ()):
         self.mis = []
@@ -267,9 +264,9 @@ class DCSet:
         if Integer.valid(dims):
             dims = range(dims)
         self.add_dimensions(dims)
-        self.add_many(mis)
+        self.update(mis)
     
-    def add(self, mi):
+    def add(self,mi):
         '''
         Add new multi-index. 
         
@@ -282,12 +279,10 @@ class DCSet:
                 self.candidates -= {mi}
             else:
                 raise ValueError('Multi-index is not admissible')
-            for dim in self.active_dims:
-                candidate = mi + kronecker(dim)
-                if self.is_admissible(candidate):
-                    self.candidates.add(candidate)
+            new_candidates = (mi + sign*kronecker(dim) for dim,sign in itertools.product(self.active_dims,(-1,1)))
+            self.candidates.update(mi for mi in new_candidates if (mi not in self.mis and mi>=MultiIndex())) 
     
-    def add_many(self,mis):
+    def update(self,mis):
         '''
         Add multiple new multi-indices.
         
@@ -306,17 +301,13 @@ class DCSet:
                 self.active_dims.add(dim)
                 if MultiIndex() in self.mis:
                     self.candidates.add(kronecker(dim))
-            
+
     def is_admissible(self, mi):
         '''
         Check if given multi-index is admissible.
-         Returns true also if multi-index is already in set!
+        Returns true also if multi-index is already in set!
         '''
-        for dim in mi.active_dims():
-            test = mi - kronecker(dim)
-            if not test in self.mis:
-                return False
-        return True
+        return (mi == MultiIndex()) or any(mi + sign*kronecker(dim) in self.mis for dim,sign in itertools.product(self.active_dims,(-1,1)))
         
     def __iter__(self):
         return self.mis.__iter__()
@@ -325,7 +316,7 @@ class DCSet:
         return list(self.mis).__str__()
                
     def __repr__(self):
-        return 'dc_set('+list(self.mis).__str__()+')'
+        return 'MISet('+list(self.mis).__str__()+')'
                 
     def __contains__(self,mi):
         return mi in self.mis
