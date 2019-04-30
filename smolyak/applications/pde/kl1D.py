@@ -1,10 +1,10 @@
 from dolfin import *  # @UnusedWildImport
 import logging
 import numpy as np
-logging.getLogger('FFC').setLevel(logging.warnings)
+logging.getLogger('FFC').setLevel(5)
 logging.basicConfig(level=logging.DEBUG)
-logging.getLogger('UFL').setLevel(logging.warnings)
-set_log_level(WARNING)
+logging.getLogger('UFL').setLevel(5)
+set_log_level(50)
 
 def kl1D(y, N, exponent, order=1):
     deg = order
@@ -26,11 +26,11 @@ def kl1D(y, N, exponent, order=1):
         u = Function(V)
         problem = LinearVariationalProblem(a, L, u, bc)
         solver = LinearVariationalSolver(problem)
-        solver.parameters['linear_solver'] = 'cg'
-        solver.parameters['preconditioner'] = 'amg'
-        cg_prm = solver.parameters['krylov_solver']
+        # solver.parameters['linear_solver'] = 'cg'
+        # solver.parameters['preconditioner'] = 'amg'
+        # cg_prm = solver.parameters['krylov_solver']
         # cg_prm['absolute_tolerance'] = 1E-25
-        cg_prm['relative_tolerance'] = 1E-25
+        # cg_prm['relative_tolerance'] = 1E-25
         # cg_prm['maximum_iterations'] = 10000
         solver.solve()
         integrand = u * dx
