@@ -7,16 +7,17 @@ class DirichletBoundary(SubDomain):
 
 import logging
 import numpy as np
-logging.getLogger('FFC').setLevel(logging.warnings)
+logging.getLogger('FFC').setLevel(5)
 logging.basicConfig(level=logging.DEBUG)
-logging.getLogger('UFL').setLevel(logging.warnings)
-set_log_level(WARNING)
+logging.getLogger('UFL').setLevel(5)
+set_log_level(50)
 
 def poisson_smooth(y, N, order=1):
     deg = order
     mesh = UnitSquareMesh(int(N), int(N))
     # File("mesh.pvd") << mesh
     V = FunctionSpace(mesh, 'CG', deg)
+    V = FunctionSpace(mesh,'Lagrange',deg)
     # Define boundary condition
     u_D = Constant(0)
     def boundary(x, on_boundary):
@@ -26,7 +27,7 @@ def poisson_smooth(y, N, order=1):
     output = np.zeros((y.shape[0], 1))
     ut = TrialFunction(V)
     v = TestFunction(V)
-    f = Constant(-6.0)
+    f = Constant(1.0)
     L = f * v * dx
     for i in range(y.shape[0]):
         # Compute solution
@@ -35,12 +36,12 @@ def poisson_smooth(y, N, order=1):
         u = Function(V)
         problem = LinearVariationalProblem(a, L, u, bc)
         solver = LinearVariationalSolver(problem)
-        solver.parameters['linear_solver'] = 'cg'
-        solver.parameters['preconditioner'] = 'amg'
-        cg_prm = solver.parameters['krylov_solver']
-        cg_prm['absolute_tolerance'] = 1E-14
-        cg_prm['relative_tolerance'] = 1E-14
-        cg_prm['maximum_iterations'] = 10000
+        # solver.parameters['linear_solver'] = 'cg'
+        # solver.parameters['preconditioner'] = 'amg'
+        # cg_prm = solver.parameters['krylov_solver']
+        # cg_prm['absolute_tolerance'] = 1E-14
+        # cg_prm['relative_tolerance'] = 1E-14
+        # cg_prm['maximum_iterations'] = 10000
         solver.solve()
         integrand = u * dx
         a = (assemble(integrand))

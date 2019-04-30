@@ -63,7 +63,7 @@ class PolynomialSpace:
         else:
             raise ValueError('Polynomial subspace is zero-dimensional')
     
-    def weighted_least_squares(self, X, W, Y):
+    def weighted_least_squares(self, X, W, Y, basis_extension=None):
         '''
         Compute least-squares approximation. 
         
@@ -74,6 +74,9 @@ class PolynomialSpace:
         :return: coefficients
         '''
         B = self.evaluate_basis(X)
+        if basis_extension:
+            b_extra = basis_extension(X)
+            B = np.concatenate([B,b_extra],axis=1)
         W = W.reshape((W.size, 1))
         N = B.shape[0]
         cond = None
@@ -90,7 +93,10 @@ class PolynomialSpace:
             # coefficients,_ = scipy.sparse.linalg.gmres(M.T@M,M.T@rls[:,0],tol=tol)
             if self.warnings and not np.isfinite(coefficients).all():
                 warnings.warn('Numerical instability encountered')
-        return {pol: coefficients[i] for i, pol in enumerate(self.basis)},cond
+        if basis_extension:
+            return {pol: coefficients[i] for i, pol in enumerate(self.basis)},cond, coefficients[len(self.basis):]
+        else:
+            return {pol: coefficients[i] for i, pol in enumerate(self.basis)},cond
          
     def get_active_dims(self):
         if self.basis:
@@ -553,13 +559,11 @@ class SinglelevelPolynomialApproximator:
             if ax is None:
                 fig = plt.figure()
                 ax = fig.gca()
-                fig.suptitle('Samples')
             ax.scatter(self.X[order, :], self.Y[order, :],**kwargs)
         elif self.polynomial_space.get_c_var() == 2:
             if ax is None:
                 fig = plt.figure()
                 ax = fig.gca(projection='3d')
-                fig.suptitle('Samples')
             ax.scatter(self.X[:, 0], self.X[:, 1], self.Y,**kwargs)
         return ax
 
@@ -660,22 +664,21 @@ class PolynomialApproximation:
         new.coefficients = other*self.coefficients
         return new
     
-    def plot(self):
+    def plot(self,ax = None):
         '''
         Plot polynomial approximation.
         '''
-        fig = plt.figure()
         if self.polynomial_space.get_c_var() == 1:
             X = self.polynomial_space.probability_distribution.get_range()
             Z = self(X)
-            ax = fig.gca()
+            ax = ax or plg.figure().gca()
             ax.plot(X, Z)
         elif self.polynomial_space.get_c_var() == 2:
             X, Y = self.polynomial_space.probability_distribution.get_range()
             Z = grid_evaluation(X, Y, self)
-            ax = fig.gca(projection='3d')
-            ax.plot_surface(X, Y, Z)
+            ax = ax or plt.figure().gca(projection='3d')
+            ax.plot_surface(X, Y, Z,alpha=0.5)
         else:
             raise ValueError('Cannot plot {}-dimensional function'.format(self.polynomial_space.get_c_var()))
-        fig.suptitle('Polynomial approximation')
+        return ax
         
