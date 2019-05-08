@@ -35,12 +35,18 @@ class PolynomialSpace:
     
     Combines domain (in form of probability space) with description
     of finite-dimensional subspace of polynomials
+
+    :param n: Dimension of domain
+    :param k: Polynomial degree
     '''
-    def __init__(self, probability_distribution,warnings = False):
+    def __init__(self, probability_distribution = None,basis=None,warnings = False, n = None, k = None):
         if isinstance(probability_distribution,ProbabilityDistribution):
             probability_distribution = ProductProbabilityDistribution([probability_distribution])
+        if probability_distribution is None:
+            probability_distribution = ProbabilityDistribution('t')**n
+            basis = indices.simplex(L=k,n=n)
         self.probability_distribution=probability_distribution
-        self.basis = []
+        self.set_basis(basis)
         self.warnings = warnings
     
     def get_dimension(self): 
@@ -48,6 +54,10 @@ class PolynomialSpace:
         Return dimension of polynomial subspace (not of domain, use get_c_var() for that)
         '''
         return len(self.basis)
+
+    @property
+    def dimension(self):
+        return self.get_dimension()
     
     def optimal_weights(self, X):
         '''
@@ -63,7 +73,7 @@ class PolynomialSpace:
         else:
             raise ValueError('Polynomial subspace is zero-dimensional')
     
-    def weighted_least_squares(self, X, W, Y, basis_extension=None):
+    def weighted_least_squares(self, X, Y, W=None, basis_extension=None):
         '''
         Compute least-squares approximation. 
         
@@ -73,12 +83,13 @@ class PolynomialSpace:
         :param Y: sample values
         :return: coefficients
         '''
+        W = W if W is not None else np.ones([len(X)])
         B = self.evaluate_basis(X)
         if basis_extension:
             b_extra = basis_extension(X)
             B = np.concatenate([B,b_extra],axis=1)
-        W = W.reshape((W.size, 1))
-        N = B.shape[0]
+        W = W.reshape(-1)
+        Y = Y.reshape(-1)
         cond = None
         if self.warnings:
             G = B.transpose().dot(B * W)
@@ -88,9 +99,8 @@ class PolynomialSpace:
         if B.shape[1]>0:
             tol=1e-9
             rls = np.sqrt(W)*Y
-            M = np.sqrt(W)*B
-            coefficients,*info = scipy.sparse.linalg.lsmr(M,rls[:,0],atol=tol,btol=tol)
-            # coefficients,_ = scipy.sparse.linalg.gmres(M.T@M,M.T@rls[:,0],tol=tol)
+            M = np.sqrt(W)[:,None]*B
+            coefficients,*info = scipy.sparse.linalg.lsmr(M,rls,atol=tol,btol=tol)
             if self.warnings and not np.isfinite(coefficients).all():
                 warnings.warn('Numerical instability encountered')
         if basis_extension:
@@ -148,7 +158,8 @@ class PolynomialSpace:
     
     def set_basis(self,polynomials):
         self.basis=[]
-        self.extend_basis(polynomials)
+        if polynomials:
+            self.extend_basis(polynomials)
         
     def extend_basis(self, polynomials):
         '''
@@ -533,7 +544,7 @@ class SinglelevelPolynomialApproximator:
             old_err_settings = np.seterr(all='raise')
             while self._recompute_approximation:
                 try:
-                    (coeffs,self._info) = self.polynomial_space.weighted_least_squares(self.X, self.W, self.Y)
+                    (coeffs,self._info) = self.polynomial_space.weighted_least_squares(X = self.X, Y = self.Y, W=self.W)
                     self._approximation =  PolynomialApproximation(self.polynomial_space,coeffs)
                     self._recompute_approximation = False
                 except LinAlgError:

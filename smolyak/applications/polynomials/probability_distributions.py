@@ -30,12 +30,17 @@ class AbstractProbabilityDistribution(ABC):
         pass
 
 class ProbabilityDistribution(AbstractProbabilityDistribution):
-    def __init__(self, measure='u', interval=(-1, 1)):
-        if measure  not in ['u', 'c', 'h']:
+    def __init__(self, measure='u', interval=None):
+        if measure  not in ['u', 'c', 'h','t']:
             raise ValueError('Measure not supported')
         else:
             self.measure = measure
-        self.interval = (float(interval[0]), float(interval[1]))
+        if measure == 'h':
+            interval = interval or 1
+            self.interval = (None,float(interval)) # replace None by center in the future
+        else:
+            interval = interval or (-1,1)
+            self.interval = (float(interval[0]), float(interval[1]))
         
     def lebesgue_density(self, X):
         if self.measure == 'u':
@@ -43,17 +48,18 @@ class ProbabilityDistribution(AbstractProbabilityDistribution):
         elif self.measure == 'c':
             return 1 / (np.pi * np.sqrt((X - self.interval[0]) * (self.interval[1] - X)))
         elif self.measure == 'h':
-            return np.exp(-(X ** 2.) / 2.) / np.sqrt(2 * np.pi)
+            return np.exp(-(X ** 2.) / (2.*self.interval[1])) / np.sqrt(2 *self.interval[1]*np.pi)
         
     def get_c_var(self):
         return 1
     
-    def get_range(self, N=200,L=1):
+    def get_range(self, N=200,L=None):
         if self.measure in ['u', 'c']:
             interval = self.interval
             L = interval[1] - interval[0]
             X = np.linspace(interval[0] + L / N, interval[1] - L / N, N)
         else:
+            L = L or self.interval[1] 
             X = np.linspace(-L, L, N)
         return X.reshape((-1, 1))
     

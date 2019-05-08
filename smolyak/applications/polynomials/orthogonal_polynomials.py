@@ -36,8 +36,14 @@ def evaluate_orthonormal_polynomials(X, max_degree, measure, interval=(0, 1),der
         elif measure == 'c':
             return chebyshev_polynomials(Xtilde, max_degree + 1)
     elif measure == 'h':
-        return hermite_polynomials(X, max_degree + 1)
+        Xtilde = X / interval[1]
+        return hermite_polynomials(Xtilde, max_degree + 1)
+    elif measure == 't':
+        return taylor_polynomials(X,max_degree+1)
     
+def taylor_polynomials(X,N):
+    return X.reshape(-1,1)**np.arange(N)
+
 def chebyshev_polynomials(X, N):
     r'''
     Evaluate the orthonormal Chebyshev polynomials on
