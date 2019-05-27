@@ -19,5 +19,5 @@ smolyak includes the following modules and packages:
     * Polynomial approximation
     
 '''
-from .smolyak import SparseApproximator
-from . import indices
+from smolyak.smolyak import SparseApproximator
+from smolyak import indices

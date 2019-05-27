@@ -1,5 +1,5 @@
 '''
 Polynomial Approximation
 '''
-from .polynomial_approximation import PolynomialApproximator
-from .probability_distributions import ProbabilityDistribution
+from smolyak.polynomial_approximation import PolynomialApproximator
+from smolyak.probability_distributions import ProbabilityDistribution
