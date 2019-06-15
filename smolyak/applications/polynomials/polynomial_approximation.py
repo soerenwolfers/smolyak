@@ -41,11 +41,12 @@ class PolynomialSpace:
     '''
     def __init__(self, probability_distribution = None,basis=None,warnings = False, n = None, k = None):
         if isinstance(probability_distribution,ProbabilityDistribution):
-            probability_distribution = ProductProbabilityDistribution([probability_distribution])
-        if probability_distribution is None:
-            probability_distribution = ProbabilityDistribution('t')**n
-            basis = indices.simplex(L=k,n=n)
-        self.probability_distribution=probability_distribution
+            self.probability_distribution = ProductProbabilityDistribution([probability_distribution])
+        else:
+            if probability_distribution is None:
+                probability_distribution = 't'
+            self.probability_distribution = ProbabilityDistribution(probability_distribution)**n
+            basis = basis or indices.simplex(L=k,n=n)
         self.set_basis(basis)
         self.warnings = warnings
     
@@ -73,6 +74,10 @@ class PolynomialSpace:
         else:
             raise ValueError('Polynomial subspace is zero-dimensional')
     
+    def get_approximation(self, X, Y, W=None):
+        coeff,*_ = self.weighted_least_squares(X=X,Y=Y,W=W)
+        return PolynomialApproximation(self,coeff)
+        
     def weighted_least_squares(self, X, Y, W=None, basis_extension=None):
         '''
         Compute least-squares approximation. 
