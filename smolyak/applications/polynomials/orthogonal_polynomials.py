@@ -17,8 +17,10 @@ def evaluate_orthonormal_polynomials(X, max_degree, measure, interval=(0, 1),der
     :rtype: numpy.array of size :code:`X.shape[0] x (max_degree+1)`
     '''
     max_degree = int(max_degree)
-    if derivative and measure != 'u':
-        raise ValueError('Derivative only supported for Legendre polynomials')
+    if derivative and measure not in ['t','u','h']:
+        raise ValueError('Derivative not implemented for Chebyshev polynomials')
+    if derivative>1 and measure not in ['h','t']:
+        raise ValueError('Second derivative only implemented for Taylor and Hermite polynomials')
     if measure in ['u', 'c']:
         Xtilde = (X - (interval[1] + interval[0]) / 2.) / ((interval[1] - interval[0]) / 2.) 
         if measure == 'u':
@@ -37,9 +39,24 @@ def evaluate_orthonormal_polynomials(X, max_degree, measure, interval=(0, 1),der
             return chebyshev_polynomials(Xtilde, max_degree + 1)
     elif measure == 'h':
         Xtilde = X / interval[1]
-        return hermite_polynomials(Xtilde, max_degree + 1)
+        y = hermite_polynomials(Xtilde, max_degree + 1)
+        factorial = np.ones((1,max_degree+1))
+        for i in range(1,max_degree+1):
+            factorial[0,i:]*=i
+        orthonormalizer = 1 / np.sqrt(factorial)
+        if derivative>0:
+            y /= orthonormalizer
+            for _ in range(derivative):
+                y = np.concatenate([np.zeros([X.shape[0],1]),np.arange(1,y.shape[1])**1*y[:,:-1]],axis=1)
+            y = 1/interval[1]**derivative*y
+            y *= orthonormalizer
+        return y
     elif measure == 't':
-        return taylor_polynomials(X,max_degree+1)
+        y = taylor_polynomials(X,max_degree+1)
+        if derivative>0:
+            for _ in range(derivative):
+                y = np.concatenate([np.zeros([X.shape[0],1]),np.arange(1,y.shape[1])*y[:,:-1]],axis=1)
+        return y
     
 def taylor_polynomials(X,N):
     return X.reshape(-1,1)**np.arange(N)
