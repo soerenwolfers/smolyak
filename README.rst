@@ -7,7 +7,7 @@ This Python package provides tools for the non-intrusive acceleration of scienti
 
 As special cases, it includes integration and interpolation on sparse grids, as well as multilevel and multi-index algorithms. for stochastic collocation.
 
-For an overview, see the paper:
+For an overview, check out 
 
    Tempone R., Wolfers S. (2017). `Smolyak's algorithm: A powerful black box for the acceleration of scientific computations`__.
    

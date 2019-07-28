@@ -46,6 +46,8 @@ class PolynomialSpace:
             if probability_distribution is None:
                 probability_distribution = 't'
             self.probability_distribution = ProbabilityDistribution(probability_distribution)**n
+            if basis is None and k is None:
+                raise ValueError('Must provide basis or polynomial degree')
             basis = basis or indices.simplex(L=k,n=n)
         self.set_basis(basis)
         self.warnings = warnings
@@ -142,6 +144,8 @@ class PolynomialSpace:
             active_vars = list()
         if not derivative:
             derivative = np.zeros(self.get_c_var())
+        elif len(derivative)<self.get_c_var():
+            derivative = derivative + [0]*(self.get_c_var()-len(derivative))
         if any(order>0 and dim not in active_vars for dim,order in enumerate(derivative)):
             values[:] = 0
         elif active_vars:
