@@ -691,7 +691,7 @@ class PolynomialApproximation:
         if self.polynomial_space.get_c_var() == 1:
             X = self.polynomial_space.probability_distribution.get_range()
             Z = self(X)
-            ax = ax or plg.figure().gca()
+            ax = ax or plt.figure().gca()
             ax.plot(X, Z)
         elif self.polynomial_space.get_c_var() == 2:
             X, Y = self.polynomial_space.probability_distribution.get_range()
