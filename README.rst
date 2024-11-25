@@ -1,4 +1,5 @@
 smolyak: A Python toolkit for the acceleration of scientific computations
+asdf
 =========================================================================
 :Author: Soeren Wolfers <soeren.wolfers@gmail.com>
 :Organization: King Abdullah University of Science and Technology (KAUST) 
